@@ -80,8 +80,8 @@ export function initMetrics(mountEl, opts = {}){
   const elSimList = mountEl.querySelector("#simList");
   const elReset = mountEl.querySelector("#resetSim");
 
-  let baselinePeople = [];    // from file
-  let simPeople = [];         // editable
+  let baselinePeople = [];
+  let simPeople = [];
 
   function fmt(n){
     if(!Number.isFinite(n)) return "0";
@@ -105,7 +105,11 @@ export function initMetrics(mountEl, opts = {}){
     return { runwayMonths, runwayDate, factorDecimal, monthlyBurn };
   }
 
-  // Hours bar: TCH fill inside AH track; if exceed, hatch outside
+  function escapeHtml(s){
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+      .replace(/\"/g,"&quot;").replace(/'/g,"&#039;");
+  }
+
   function renderHoursUtil(hours){
     const AH = Math.max(0, Number(hours?.AH || 0));
     const TCH = Math.max(0, Number(hours?.TCH || 0));
@@ -114,11 +118,9 @@ export function initMetrics(mountEl, opts = {}){
     const exceed = Math.max(0, TCH - AH);
     const within = Math.min(AH, TCH);
 
-    // scale: use AH as base. if exceed, show extra zone to the right (up to 35% extra)
     const base = Math.max(AH, 1);
-    const maxExtra = Math.max(exceed, 0);
     const extraCap = base * 0.35;
-    const shownExtra = Math.min(maxExtra, extraCap);
+    const shownExtra = Math.min(exceed, extraCap);
     const totalScale = base + shownExtra;
 
     const withinPct = (within / totalScale) * 100;
@@ -128,7 +130,7 @@ export function initMetrics(mountEl, opts = {}){
     const insideLabel = (pct)=> pct >= 14;
 
     elHoursBar.innerHTML = `
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
         <span class="pill">AH: ${fmt(AH)}</span>
         <span class="pill">TCH: ${fmt(TCH)}</span>
         <span class="pill">BH: ${fmt(BH)}</span>
@@ -142,11 +144,9 @@ export function initMetrics(mountEl, opts = {}){
         border:1px solid rgba(255,255,255,0.10);
         overflow:visible;
       ">
-        <!-- AH marker (end of base) -->
         <div style="position:absolute; left:${basePct}%; top:-6px; bottom:-6px; width:2px; background:rgba(255,255,255,0.25);"></div>
 
-        <!-- Within fill -->
-        <div id="withinSeg" style="
+        <div style="
           position:absolute; left:0; top:0; bottom:0;
           width:${withinPct}%;
           border-radius:999px;
@@ -160,9 +160,8 @@ export function initMetrics(mountEl, opts = {}){
           }
         </div>
 
-        <!-- Exceed hatched -->
         ${exceed > 0 ? `
-          <div id="exceedSeg" style="
+          <div style="
             position:absolute;
             left:${basePct}%;
             top:0; bottom:0;
@@ -192,7 +191,6 @@ export function initMetrics(mountEl, opts = {}){
     if(chart){ chart.destroy(); chart=null; }
   }
 
-  // Deployment donut with ABSOLUTE %: add Unallocated or Over-allocated slice
   function renderDeploymentChart(people){
     destroyChart();
 
@@ -202,7 +200,6 @@ export function initMetrics(mountEl, opts = {}){
     const labels = top.map(p=>p.name);
     const values = top.map(p=>p.pct);
 
-    // Add remainder to 100
     const remainder = 100 - total;
     if(remainder > 0){
       labels.push("Unallocated");
@@ -210,6 +207,11 @@ export function initMetrics(mountEl, opts = {}){
     } else if(remainder < 0){
       labels.push("Over-allocated");
       values.push(Math.abs(remainder));
+    }
+
+    if(typeof Chart === "undefined"){
+      elDeployLegend.innerHTML = `<div class="note">Chart.js not loaded (check network).</div>`;
+      return;
     }
 
     const canvas = mountEl.querySelector("#deployChart");
@@ -225,19 +227,11 @@ export function initMetrics(mountEl, opts = {}){
         responsive:true,
         plugins:{
           legend:{ display:false },
-          tooltip:{
-            callbacks:{
-              label:(ctx)=>{
-                const v = Number(ctx.raw || 0);
-                return `${ctx.label}: ${v.toFixed(1)}%`;
-              }
-            }
-          }
+          tooltip:{ callbacks:{ label:(ctx)=> `${ctx.label}: ${Number(ctx.raw||0).toFixed(1)}%` } }
         }
       }
     });
 
-    // Legend: show absolute %
     const meta = chart.getDatasetMeta(0);
     const colors = meta?.data?.map(el => el.options?.backgroundColor) || labels.map(()=> "rgba(255,255,255,0.25)");
 
@@ -262,16 +256,10 @@ export function initMetrics(mountEl, opts = {}){
     const burn = runway?.monthlyBurn;
 
     const pill = (txt)=>`<span class="pill">${escapeHtml(txt)}</span>`;
-
     const parts = [];
     parts.push(pill(`Factor: ${Number.isFinite(factor) ? factor.toFixed(2) : "—"}`));
     parts.push(pill(`Monthly: ${Number.isFinite(burn) ? burn.toFixed(1) : "—"} hrs`));
-
-    if(rm == null){
-      parts.push(pill(`Runway: —`));
-    } else {
-      parts.push(pill(`Runway: ${rm.toFixed(2)} mo`));
-    }
+    parts.push(pill(`Runway: ${rm == null ? "—" : rm.toFixed(2) + " mo"}`));
 
     elRunwaySummary.innerHTML = parts.join("");
   }
@@ -305,7 +293,6 @@ export function initMetrics(mountEl, opts = {}){
       </div>
     `).join("");
 
-    // hook inputs
     for(const inp of elSimList.querySelectorAll("input[type=number]")){
       inp.addEventListener("input", ()=>{
         const idx = Number(inp.dataset.idx);
@@ -319,11 +306,6 @@ export function initMetrics(mountEl, opts = {}){
     }
   }
 
-  function escapeHtml(s){
-    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
-      .replace(/\"/g,"&quot;").replace(/'/g,"&#039;");
-  }
-
   elReset.onclick = ()=>{
     simPeople = baselinePeople.map(p=>({ ...p }));
     const runway = computeRunway(simPeople, state.hours.BH);
@@ -335,16 +317,13 @@ export function initMetrics(mountEl, opts = {}){
   function setData(next){
     state = { ...state, ...next };
 
-    // hours
     renderHoursUtil(state.hours);
 
-    // deployment
     baselinePeople = (state.people || []).map(p=>({ name:p.name, pct:Number(p.pct||0) }));
     simPeople = baselinePeople.map(p=>({ ...p }));
 
     renderDeploymentChart(baselinePeople);
 
-    // runway baseline
     const runway = computeRunway(simPeople, state.hours.BH);
     renderRunwaySummary(runway);
     renderSimulatorList();
