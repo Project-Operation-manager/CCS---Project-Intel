@@ -18,6 +18,9 @@ function startApp(){
     "DC","CO"
   ];
 
+  // Auto-load a repo CSV on startup (served by GitHub Pages or your web server)
+  const DEFAULT_AUTO_CSV = "sheetjs.csv";
+
   // Discipline mapping
   const DISCIPLINE = {
     Architecture: new Set(["CD1","CD2","CD5","SD1","SD2","AD","DD1","DD2","TD1","TD2","TD3","WD20","WD40","WD60"]),
@@ -660,10 +663,7 @@ function startApp(){
     return { headers, objects };
   }
 
-  async function importFile(file){
-    const name=(file?.name||"").toLowerCase();
-    setStatus("Loading…");
-
+  function resetForImport(){
     csvRowsAll=[]; allRows=[]; filteredRows=[];
     activeTeamType=""; activeTeam=""; activeProject="";
     runwayDate = null;
@@ -677,32 +677,46 @@ function startApp(){
     elTeamRadios.innerHTML = "";
     elTable.innerHTML = "";
     elRowCount.textContent = "0 rows";
+  }
+
+  function hydrateRowsFromHeadersAndObjects(headers, objects){
+    const keyMap = buildHeaderIndex(headers);
+
+    typeCols = discoverTeamTypeColumns(headers);
+
+    csvRowsAll = objects.map(o=>{
+      const row = { ...o, __keyMap:keyMap };
+      const info = deriveTeamInfo(row, typeCols);
+      row.__teamType = info.teamType || "";
+      row.__team = info.team || "";
+      return row;
+    });
+
+    renderRadioRow(elTeamTypeRadios, TEAM_TYPES_FIXED, "", setTeamType);
+    const teamsAll = uniq(csvRowsAll.map(r=>displayTeam(String(r.__team||"").trim()))).sort((a,b)=>a.localeCompare(b));
+    renderRadioRow(elTeamRadios, teamsAll, "", (v)=> setTeam(v));
+
+    applyCsvFilters();
+  }
+
+  async function importDelimitedText(text){
+    const delim = detectDelimiter(text);
+    const matrix = parseDelimited(text, delim);
+    const { headers, objects } = matrixToObjects(matrix);
+    hydrateRowsFromHeadersAndObjects(headers, objects);
+    return { delim, rowCount: csvRowsAll.length };
+  }
+
+  async function importFile(file){
+    const name=(file?.name||"").toLowerCase();
+    setStatus("Loading…");
+    resetForImport();
 
     try{
       if(name.endsWith(".csv") || name.endsWith(".tsv") || name.endsWith(".txt")){
         const text = await file.text();
-        const delim = detectDelimiter(text);
-        const matrix = parseDelimited(text, delim);
-        const { headers, objects } = matrixToObjects(matrix);
-        const keyMap = buildHeaderIndex(headers);
-
-        typeCols = discoverTeamTypeColumns(headers);
-
-        csvRowsAll = objects.map(o=>{
-          const row = { ...o, __keyMap:keyMap };
-          const info = deriveTeamInfo(row, typeCols);
-          row.__teamType = info.teamType || "";
-          row.__team = info.team || "";
-          return row;
-        });
-
-        renderRadioRow(elTeamTypeRadios, TEAM_TYPES_FIXED, "", setTeamType);
-        const teamsAll = uniq(csvRowsAll.map(r=>displayTeam(String(r.__team||"").trim()))).sort((a,b)=>a.localeCompare(b));
-        renderRadioRow(elTeamRadios, teamsAll, "", (v)=> setTeam(v));
-
-        applyCsvFilters();
-
-        setStatus(`Loaded (${delim === "\t" ? "TAB" : delim} • ${csvRowsAll.length} rows)`, "ok");
+        const { delim, rowCount } = await importDelimitedText(text);
+        setStatus(`Loaded (${delim === "\t" ? "TAB" : delim} • ${rowCount} rows)`, "ok");
         return;
       }
 
@@ -716,23 +730,8 @@ function startApp(){
         const ws = workbook.Sheets[firstSheet];
         const matrix = XLSX.utils.sheet_to_json(ws,{ header:1, defval:"", raw:false });
         const { headers, objects } = matrixToObjects(matrix);
-        const keyMap = buildHeaderIndex(headers);
+        hydrateRowsFromHeadersAndObjects(headers, objects);
 
-        typeCols = discoverTeamTypeColumns(headers);
-
-        csvRowsAll = objects.map(o=>{
-          const row = { ...o, __keyMap:keyMap };
-          const info = deriveTeamInfo(row, typeCols);
-          row.__teamType = info.teamType || "";
-          row.__team = info.team || "";
-          return row;
-        });
-
-        renderRadioRow(elTeamTypeRadios, TEAM_TYPES_FIXED, "", setTeamType);
-        const teamsAll = uniq(csvRowsAll.map(r=>displayTeam(String(r.__team||"").trim()))).sort((a,b)=>a.localeCompare(b));
-        renderRadioRow(elTeamRadios, teamsAll, "", (v)=> setTeam(v));
-
-        applyCsvFilters();
         setStatus(`Imported "${file.name}" (sheet: ${firstSheet})`, "ok");
         return;
       }
@@ -741,6 +740,59 @@ function startApp(){
     } catch(err){
       console.error(err);
       setStatus(`Failed to load: ${err?.message || err}`, "warn");
+    }
+  }
+
+  async function importUrl(url){
+    const rawUrl = String(url || "").trim();
+    if(!rawUrl){
+      setStatus("Auto-load failed: missing URL. You can upload a file instead.", "warn");
+      return;
+    }
+
+    // Infer a filename from the URL (for extension detection + friendly messages)
+    const inferredName = (()=>{
+      const clean = rawUrl.split("#")[0].split("?")[0];
+      const last = clean.split("/").pop();
+      return last || "sheetjs.csv";
+    })();
+
+    const nameLower = inferredName.toLowerCase();
+
+    setStatus(`Loading "${inferredName}"…`);
+    resetForImport();
+
+    try{
+      const res = await fetch(rawUrl, { cache: "no-store" });
+      if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+
+      if(nameLower.endsWith(".csv") || nameLower.endsWith(".tsv") || nameLower.endsWith(".txt")){
+        const text = await res.text();
+        const { delim, rowCount } = await importDelimitedText(text);
+        setStatus(`Auto-loaded "${inferredName}" (${delim === "\t" ? "TAB" : delim} • ${rowCount} rows)`, "ok");
+        return;
+      }
+
+      if(nameLower.endsWith(".xlsx") || nameLower.endsWith(".xls")){
+        if(typeof XLSX === "undefined") throw new Error("XLSX library not loaded (check network).");
+
+        const data = await res.arrayBuffer();
+        const workbook = XLSX.read(data,{ type:"array", cellDates:true });
+        if(!workbook.SheetNames?.length) throw new Error("No sheets found.");
+        const firstSheet = workbook.SheetNames[0];
+        const ws = workbook.Sheets[firstSheet];
+        const matrix = XLSX.utils.sheet_to_json(ws,{ header:1, defval:"", raw:false });
+        const { headers, objects } = matrixToObjects(matrix);
+        hydrateRowsFromHeadersAndObjects(headers, objects);
+
+        setStatus(`Auto-loaded "${inferredName}" (sheet: ${firstSheet})`, "ok");
+        return;
+      }
+
+      throw new Error("Unsupported remote file type.");
+    } catch(err){
+      console.error(err);
+      setStatus(`Auto-load failed: ${err?.message || err}. You can upload a file instead.`, "warn");
     }
   }
 
@@ -755,4 +807,19 @@ function startApp(){
   // Initial
   gantt.setData({ title:"Select a project", projectPP:0, stages:[], runwayDate:null });
   metrics.setData({ title:"", hours:{AH:0,TCH:0,BH:0}, people:[], runway:null });
+
+  // Auto-load the repo CSV (default: sheetjs.csv). Override via:
+  //   ?csv=path/to/file.csv
+  // Disable via:
+  //   ?autoload=false
+  (async ()=>{
+    const params = new URLSearchParams(window.location.search);
+    const autoload = (params.get("autoload") || "").trim().toLowerCase();
+    if(["0","false","no","off"].includes(autoload)) return;
+
+    const url = (params.get("csv") || DEFAULT_AUTO_CSV).trim();
+    if(!url) return;
+
+    await importUrl(url);
+  })();
 }
