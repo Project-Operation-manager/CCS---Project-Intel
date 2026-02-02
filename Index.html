@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Project Intel</title>
+
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#0b1220; --card:#121b2f; --text:#e8eefc; --muted:#9fb0d0; --grid:#22304f;
+
+      --chip:#0f172a;
+      --chipBorder: rgba(255,255,255,0.10);
+
+      --rowh: 44px;
+
+      /* Discipline colors */
+      --arch: rgba(90, 173, 255, 0.92);
+      --interior: rgba(255, 169, 77, 0.92);
+      --land: rgba(176, 124, 255, 0.92);
+
+      /* PP color */
+      --pp: rgba(255, 92, 162, 0.92);
+
+      /* Lines */
+      --todayLine: rgba(255,255,255,0.70);
+      --runwayLine: rgba(255,209,138,0.90);
+
+      --ok:#8bffb2;
+      --warn:#ffd18a;
+      --bad:#ff7a7a;
+
+      --legendBorder: rgba(255,255,255,0.10);
+    }
+
+    *{ box-sizing:border-box; }
+    body{ margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--text); }
+
+    header{
+      padding:12px 16px 10px;
+      border-bottom:1px solid var(--grid);
+      background: rgba(0,0,0,0.12);
+    }
+    .topbar{
+      display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+      width:100%;
+    }
+    .titleWrap{ display:flex; flex-direction:column; gap:4px; min-width: 180px; }
+    h1{ margin:0; font-size:16px; letter-spacing:0.2px; }
+    .sub{ color:var(--muted); font-size:12px; }
+
+    .controls{
+      display:flex; flex-direction:column; gap:10px;
+      width: min(980px, 100%);
+      align-items:flex-end;
+    }
+    .controlsRow{
+      display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end;
+      width:100%;
+    }
+    .pill{
+      font-size:12px; padding:6px 10px; border:1px solid var(--grid);
+      border-radius:999px; color:var(--muted); background: rgba(0,0,0,0.10);
+      white-space:nowrap;
+    }
+    label{ font-size:12px; color:var(--muted); display:flex; align-items:center; gap:8px; }
+    input[type="file"]{ color:var(--muted); }
+
+    select,input[type="text"]{
+      background:#0f172a; border:1px solid var(--grid); color:var(--text);
+      border-radius:12px; padding:9px 10px; outline:none;
+      min-width: 260px;
+    }
+    input[type="text"]{ min-width: 220px; }
+
+    .radioWrap{
+      width:100%;
+      display:flex; gap:10px; align-items:center; justify-content:flex-end;
+      flex-wrap:wrap;
+    }
+    .radioLabel{ font-size:12px; color:var(--muted); }
+    .radioRow{
+      display:flex; gap:8px; align-items:center;
+      overflow:auto;
+      padding:6px 6px;
+      border:1px solid rgba(255,255,255,0.06);
+      border-radius:14px;
+      background: rgba(0,0,0,0.10);
+      max-width: 100%;
+    }
+    .radioBtn{
+      border:1px solid var(--chipBorder);
+      background: var(--chip);
+      color: var(--muted);
+      border-radius:999px;
+      padding:7px 10px;
+      font-size:12px;
+      cursor:pointer;
+      white-space:nowrap;
+      user-select:none;
+      transition: transform .05s ease, border-color .15s ease, color .15s ease;
+    }
+    .radioBtn:active{ transform:scale(0.985); }
+    .radioBtn.active{
+      color: var(--text);
+      border-color: rgba(139,255,178,0.55);
+      box-shadow: 0 0 0 1px rgba(139,255,178,0.18) inset;
+    }
+
+    .layout{
+      display:grid;
+      grid-template-columns: 1fr 420px;
+      gap:12px;
+      padding:12px 16px 16px;
+      align-items:start;
+      width:100%;
+    }
+    @media (max-width: 1200px){
+      .layout{ grid-template-columns: 1fr; }
+      .controls{ align-items:stretch; }
+      .controlsRow{ justify-content:flex-start; }
+      .radioWrap{ justify-content:flex-start; }
+      select,input[type="text"]{ min-width: 0; width:100%; }
+    }
+
+    .card{
+      background:var(--card); border:1px solid var(--grid);
+      border-radius:14px; padding:12px; box-shadow:0 10px 30px rgba(0,0,0,.25);
+    }
+    .note{ color:var(--muted); font-size:12px; line-height:1.45; margin-top:8px; }
+
+    /* Gantt container */
+    .ganttTopRow{
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      margin-bottom:10px;
+      flex-wrap:wrap;
+    }
+    .ganttTitle{
+      display:flex; align-items:baseline; gap:10px; min-width:240px;
+      max-width: 55%;
+    }
+    .ganttTitle b{
+      font-size:14px; font-weight:700; color:var(--text);
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+      max-width: 520px;
+    }
+    .ganttTitle span{ color:var(--muted); font-size:12px; }
+
+    .ganttControlsRow{
+      display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end;
+      flex:1 1 auto;
+    }
+    input[type="range"]{ width:min(420px, 100%); accent-color:#9fb0d0; }
+
+    .legend{
+      display:flex; align-items:center; gap:10px;
+      padding:8px 10px;
+      border:1px solid var(--legendBorder);
+      border-radius:12px;
+      background: rgba(0,0,0,0.10);
+    }
+    .legItem{ display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
+    .sw{ width:10px; height:10px; border-radius:4px; border:1px solid rgba(255,255,255,0.18); }
+
+    .ganttOuter{ border:1px solid var(--grid); border-radius:12px; overflow:hidden; background: rgba(0,0,0,0.08); }
+    .ganttScroll{ max-height: calc(100vh - 260px); min-height: 560px; overflow:auto; }
+
+    .ganttGrid{
+      display:grid;
+      grid-template-columns: 340px 1fr;
+      align-items:stretch;
+      min-width: 980px;
+      width:100%;
+    }
+
+    .gHeadL, .gHeadR{
+      height: 56px;
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display:flex;
+      align-items:stretch;
+      padding: 0;
+      box-sizing:border-box;
+      background: rgba(18,27,47,0.98);
+      border-bottom:1px solid var(--grid);
+    }
+    .gHeadL{ left:0; z-index: 30; border-right:1px solid var(--grid); padding:0 12px; display:flex; align-items:center; }
+    .gHeadL b{ font-size:12px; color:var(--muted); font-weight:600; }
+
+    .headStack{ width:100%; display:flex; flex-direction:column; }
+    .qRow, .mRow{
+      display:flex; width:100%;
+      font-size:11px; color:var(--muted);
+      user-select:none;
+      line-height:1;
+    }
+    .qSeg, .mSeg{
+      border-left:1px solid rgba(255,255,255,0.06);
+      padding:6px 8px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .qSeg{ color: rgba(255,255,255,0.65); font-weight:600; padding-top:7px; padding-bottom:5px; }
+    .mSeg{ padding-top:5px; padding-bottom:7px; }
+
+    .gCellL{
+      height: var(--rowh);
+      border-bottom:1px solid var(--grid);
+      border-right:1px solid var(--grid);
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding:0 12px;
+      background: rgba(255,255,255,0.01);
+      position: sticky;
+      left: 0;
+      z-index: 10;
+    }
+    .gCellL:nth-of-type(4n+1){ background: rgba(255,255,255,0.02); }
+
+    .leftMain{ display:flex; align-items:center; gap:10px; min-width:0; flex:1 1 auto; }
+    .stageName{ font-size:12px; width:64px; flex:0 0 64px; color:var(--text); }
+    .deliver{ font-size:12px; color:rgba(255,255,255,0.80); width:72px; flex:0 0 72px; text-align:right; }
+    .alert{
+      font-size:11px;
+      padding:5px 8px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,0.10);
+      background: rgba(0,0,0,0.15);
+      color: var(--muted);
+      white-space:nowrap;
+      flex:0 0 auto;
+    }
+    .alert.ok{ color: var(--ok); border-color: rgba(139,255,178,0.35); }
+    .alert.bad{ color: var(--bad); border-color: rgba(255,122,122,0.35); }
+    .alert.warn{ color: var(--warn); border-color: rgba(255,209,138,0.35); }
+
+    .ppCircle{
+      width:34px; height:34px; border-radius:999px;
+      display:flex; align-items:center; justify-content:center;
+      font-size:11px;
+      color: rgba(255,255,255,0.95);
+      border:1px solid rgba(255,255,255,0.18);
+      background: rgba(0,0,0,0.18);
+      flex:0 0 auto;
+    }
+    .ppCircle span{ font-variant-numeric: tabular-nums; }
+
+    .gCellR{
+      height: var(--rowh);
+      border-bottom:1px solid var(--grid);
+      position:relative;
+      background: rgba(255,255,255,0.02);
+      background-image: var(--gridBg);
+      background-repeat: repeat;
+      background-size: auto 100%;
+      overflow:hidden;
+    }
+    .lane{ position:absolute; left:0; right:0; top:0; bottom:0; }
+
+    .bar{
+      position:absolute;
+      left:0;
+      top:2px;
+      bottom:2px;
+      border-radius: 10px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+      overflow:visible;
+    }
+    .barInner{
+      position:absolute; inset:0;
+      border-radius: 10px;
+    }
+    .barLabel{
+      position:absolute;
+      top:50%;
+      transform:translateY(-50%);
+      font-size:11px;
+      color: rgba(255,255,255,0.95);
+      background: rgba(0,0,0,0.20);
+      padding:2px 8px;
+      border-radius:999px;
+      white-space:nowrap;
+      pointer-events:none;
+    }
+    .barLabel.in{ right:10px; }
+    .barLabel.out{
+      left: calc(100% + 8px);
+      right:auto;
+      background: rgba(0,0,0,0.10);
+      border:1px solid rgba(255,255,255,0.10);
+    }
+
+    .extHatch{
+      position:absolute;
+      top:0; bottom:0;
+      border-radius: 10px;
+      background-image: repeating-linear-gradient(
+        45deg,
+        rgba(255,255,255,0.00) 0 6px,
+        rgba(255,255,255,0.18) 6px 9px
+      );
+      mix-blend-mode: overlay;
+      pointer-events:none;
+    }
+
+    .vline{
+      position:absolute;
+      top:0; bottom:0;
+      width:2px;
+      pointer-events:none;
+      opacity:1;
+      z-index: 5;
+    }
+    .vline.today{ background: var(--todayLine); }
+    .vline.runway{ background: var(--runwayLine); }
+    .vtag{
+      position:absolute;
+      top:6px;
+      transform: translateX(-50%);
+      font-size:11px;
+      padding:2px 7px;
+      border-radius:999px;
+      background: rgba(0,0,0,0.18);
+      border:1px solid rgba(255,255,255,0.10);
+      color: rgba(255,255,255,0.85);
+      pointer-events:none;
+      z-index: 6;
+      white-space:nowrap;
+    }
+    .vtag.runway{ color: var(--warn); border-color: rgba(255,209,138,0.30); }
+
+    /* Raw table */
+    table{ width:100%; border-collapse:collapse; font-size:12px; }
+    th,td{ border-bottom:1px solid var(--grid); padding:8px 6px; text-align:left; vertical-align:top; }
+    th{ color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--card); }
+  </style>
+</head>
+
+<body>
+<header>
+  <div class="topbar">
+    <div class="titleWrap">
+      <h1>Project Intel</h1>
+      <div class="sub">Single-repo modular build (Gantt + Metrics)</div>
+    </div>
+
+    <div class="controls">
+      <div class="controlsRow">
+        <select id="projectSelect" disabled>
+          <option value="">Select a project…</option>
+        </select>
+
+        <input id="search" type="text" placeholder="Search rows…" disabled />
+
+        <label style="margin-left:auto;">
+          <span class="pill">Upload</span>
+          <input id="file" type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" />
+        </label>
+
+        <span id="status" class="pill">No file loaded</span>
+      </div>
+
+      <div class="radioWrap">
+        <span class="radioLabel">Discipline</span>
+        <div id="teamTypeRadios" class="radioRow"></div>
+      </div>
+
+      <div class="radioWrap">
+        <span class="radioLabel">Team</span>
+        <div id="teamRadios" class="radioRow"></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <main class="card">
+    <div id="ganttMount"></div>
+  </main>
+
+  <aside class="card">
+    <div id="metricsMount"></div>
+  </aside>
+</div>
+
+<div style="padding:0 16px 16px;">
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;">
+      <b style="font-size:13px;">Raw data (filtered)</b>
+      <span class="pill" id="rowCount">0 rows</span>
+    </div>
+    <div class="note">Shows up to 400 rows.</div>
+    <div style="max-height:520px; overflow:auto; border-radius:12px; margin-top:10px;">
+      <table id="table"></table>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>
