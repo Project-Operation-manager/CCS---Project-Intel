@@ -16,8 +16,203 @@ export function initGantt(mountEl, opts = {}){
   let ganttMaxStart = 0;
   let ganttOffset = 0;
 
-  // Build DOM skeleton
   mountEl.innerHTML = `
+    <style>
+      .ganttTopRow{
+        display:flex; align-items:center; justify-content:space-between; gap:10px;
+        margin-bottom:10px;
+        flex-wrap:wrap;
+      }
+      .ganttTitle{ display:flex; align-items:baseline; gap:10px; min-width:240px; max-width: 55%; }
+      .ganttTitle b{
+        font-size:14px; font-weight:700; color:var(--text);
+        white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+        max-width: 520px;
+      }
+
+      .ganttControlsRow{
+        display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end;
+        flex:1 1 auto;
+      }
+      input[type="range"]{ width:min(420px, 100%); accent-color:#9fb0d0; }
+
+      .legend{
+        display:flex; align-items:center; gap:10px;
+        padding:8px 10px;
+        border:1px solid var(--legendBorder);
+        border-radius:12px;
+        background: rgba(0,0,0,0.10);
+      }
+      .legItem{ display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
+      .sw{ width:10px; height:10px; border-radius:4px; border:1px solid rgba(255,255,255,0.18); }
+
+      .ganttOuter{ border:1px solid var(--grid); border-radius:12px; overflow:hidden; background: rgba(0,0,0,0.08); }
+      .ganttScroll{ max-height: calc(100vh - 260px); min-height: 560px; overflow:auto; }
+
+      .ganttGrid{
+        display:grid;
+        grid-template-columns: 360px 1fr;
+        align-items:stretch;
+        min-width: 980px;
+        width:100%;
+      }
+      .gHeadL, .gHeadR{
+        height: 60px;
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display:flex;
+        align-items:stretch;
+        padding: 0;
+        background: rgba(18,27,47,0.98);
+        border-bottom:1px solid var(--grid);
+      }
+      .gHeadL{ left:0; z-index: 30; border-right:1px solid var(--grid); padding:0 12px; display:flex; align-items:center; }
+      .gHeadL b{ font-size:12px; color:var(--muted); font-weight:600; }
+
+      .headStack{ width:100%; display:flex; flex-direction:column; }
+      .qRow, .mRow{
+        display:flex; width:100%;
+        font-size:11px; color:var(--muted);
+        user-select:none;
+        line-height:1;
+      }
+      .qSeg, .mSeg{
+        border-left:1px solid rgba(255,255,255,0.06);
+        padding:6px 8px;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+      }
+      .qSeg{ color: rgba(255,255,255,0.65); font-weight:600; padding-top:8px; padding-bottom:5px; }
+      .mSeg{ padding-top:5px; padding-bottom:8px; }
+
+      .gCellL{
+        height: var(--rowh);
+        border-bottom:1px solid var(--grid);
+        border-right:1px solid var(--grid);
+        display:flex;
+        align-items:center;
+        gap:10px;
+        padding:0 12px;
+        background: rgba(255,255,255,0.01);
+        position: sticky;
+        left: 0;
+        z-index: 10;
+      }
+      .gCellL:nth-of-type(4n+1){ background: rgba(255,255,255,0.02); }
+
+      .leftMain{ display:flex; align-items:center; gap:10px; min-width:0; flex:1 1 auto; }
+      .stageName{ font-size:12px; width:64px; flex:0 0 64px; color:var(--text); }
+      .deliver{ font-size:12px; color:rgba(255,255,255,0.80); width:84px; flex:0 0 84px; text-align:right; }
+
+      .alert{
+        font-size:11px;
+        padding:6px 9px;
+        border-radius:999px;
+        border:1px solid rgba(255,255,255,0.10);
+        background: rgba(0,0,0,0.15);
+        color: var(--muted);
+        white-space:nowrap;
+        flex:0 0 auto;
+      }
+      .alert.ok{ color: var(--ok); border-color: rgba(139,255,178,0.35); }
+      .alert.bad{ color: var(--bad); border-color: rgba(255,122,122,0.35); }
+      .alert.warn{ color: var(--warn); border-color: rgba(255,209,138,0.35); }
+
+      .ppCircle{
+        width:38px; height:38px; border-radius:999px;
+        display:flex; align-items:center; justify-content:center;
+        font-size:12px;
+        color: rgba(255,255,255,0.95);
+        border:1px solid rgba(255,255,255,0.18);
+        background: rgba(0,0,0,0.18);
+        flex:0 0 auto;
+      }
+      .ppCircle span{ font-variant-numeric: tabular-nums; }
+
+      .gCellR{
+        height: var(--rowh);
+        border-bottom:1px solid var(--grid);
+        position:relative;
+        background: rgba(255,255,255,0.02);
+        background-image: var(--gridBg);
+        background-repeat: repeat;
+        background-size: auto 100%;
+        overflow:hidden;
+      }
+      .lane{ position:absolute; left:0; right:0; top:0; bottom:0; }
+
+      .bar{
+        position:absolute;
+        top:2px;
+        bottom:2px;
+        border-radius: 12px;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+        overflow:visible;
+      }
+      .barInner{ position:absolute; inset:0; border-radius:12px; }
+
+      .barLabel{
+        position:absolute;
+        top:50%;
+        transform:translateY(-50%);
+        font-size:11px;
+        color: rgba(255,255,255,0.95);
+        background: rgba(0,0,0,0.20);
+        padding:2px 8px;
+        border-radius:999px;
+        white-space:nowrap;
+        pointer-events:none;
+      }
+      .barLabel.in{ right:10px; }
+      .barLabel.out{
+        left: calc(100% + 8px);
+        right:auto;
+        background: rgba(0,0,0,0.10);
+        border:1px solid rgba(255,255,255,0.10);
+      }
+
+      .extHatch{
+        position:absolute;
+        top:0; bottom:0;
+        border-radius: 12px;
+        background-image: repeating-linear-gradient(
+          45deg,
+          rgba(255,255,255,0.00) 0 6px,
+          rgba(255,255,255,0.18) 6px 9px
+        );
+        mix-blend-mode: overlay;
+        pointer-events:none;
+      }
+
+      .vline{
+        position:absolute;
+        top:0; bottom:0;
+        width:2px;
+        pointer-events:none;
+        z-index: 5;
+      }
+      .vline.today{ background: var(--todayLine); }
+      .vline.runway{ background: var(--runwayLine); }
+
+      .vtag{
+        position:absolute;
+        top:6px;
+        transform: translateX(-50%);
+        font-size:11px;
+        padding:2px 7px;
+        border-radius:999px;
+        background: rgba(0,0,0,0.18);
+        border:1px solid rgba(255,255,255,0.10);
+        color: rgba(255,255,255,0.85);
+        pointer-events:none;
+        z-index: 6;
+        white-space:nowrap;
+      }
+      .vtag.runway{ color: var(--warn); border-color: rgba(255,209,138,0.30); }
+    </style>
+
     <div class="ganttTopRow">
       <div class="ganttTitle">
         <b id="gTitle">Select a project</b>
@@ -57,29 +252,20 @@ export function initGantt(mountEl, opts = {}){
     render();
   };
 
-  function monthShort(d){
-    return d.toLocaleString(undefined, { month:"short" });
-  }
+  function monthShort(d){ return d.toLocaleString(undefined, { month:"short" }); }
 
-  // Fiscal quarter (Apr-Mar)
+  // Fiscal quarter (Apr–Mar)
   function fiscalQuarter(d){
-    const m = d.getMonth(); // 0=Jan
-    if(m >= 3 && m <= 5) return "Q1";     // Apr-Jun
-    if(m >= 6 && m <= 8) return "Q2";     // Jul-Sep
-    if(m >= 9 && m <= 11) return "Q3";    // Oct-Dec
-    return "Q4";                          // Jan-Mar
+    const m = d.getMonth();
+    if(m >= 3 && m <= 5) return "Q1";
+    if(m >= 6 && m <= 8) return "Q2";
+    if(m >= 9 && m <= 11) return "Q3";
+    return "Q4";
   }
 
   function buildMonthSegments(windowStart, windowEnd){
     const segs=[];
-    let cur = new Date(windowStart.getFullYear(), windowStart.getMonth(), 1);
-    if(cur > windowStart) cur = new Date(windowStart.getFullYear(), windowStart.getMonth(), 1);
-    // move cur to the windowStart month boundary
-    cur = new Date(windowStart.getFullYear(), windowStart.getMonth(), 1);
-
-    // ensure start at windowStart for segment day counting
     let segStart = new Date(windowStart);
-
     while(segStart < windowEnd){
       const nextMonth = new Date(segStart.getFullYear(), segStart.getMonth()+1, 1);
       const segEnd = nextMonth < windowEnd ? nextMonth : windowEnd;
@@ -98,11 +284,8 @@ export function initGantt(mountEl, opts = {}){
     const out=[];
     for(const seg of monthSegs){
       const last = out[out.length-1];
-      if(last && last.q === seg.q){
-        last.days += seg.days;
-      } else {
-        out.push({ q: seg.q, days: seg.days });
-      }
+      if(last && last.q === seg.q) last.days += seg.days;
+      else out.push({ q: seg.q, days: seg.days });
     }
     return out;
   }
@@ -111,10 +294,9 @@ export function initGantt(mountEl, opts = {}){
 
   function computeMinMaxDates(){
     const today = new Date();
-    const dates = [];
+    const dates = [today];
 
     if(state.runwayDate instanceof Date && !isNaN(state.runwayDate)) dates.push(state.runwayDate);
-    dates.push(today);
 
     for(const s of state.stages){
       if(s.start instanceof Date && !isNaN(s.start)) dates.push(s.start);
@@ -123,23 +305,18 @@ export function initGantt(mountEl, opts = {}){
     }
 
     if(!dates.length) return { min:null, max:null };
-
     const min = new Date(Math.min(...dates.map(d=>d.getTime())));
     const max = new Date(Math.max(...dates.map(d=>d.getTime())));
     return { min, max };
   }
 
   function setWindowLabel(windowStart){
-    if(!windowStart){
-      elWindow.textContent = "—";
-      return;
-    }
+    if(!windowStart){ elWindow.textContent = "—"; return; }
     const windowEnd = new Date(windowStart.getTime() + WINDOW_DAYS*86400000);
     elWindow.textContent = fmtWindow(windowStart, windowEnd);
   }
 
   function gridBackground(){
-    // weekly + 4-week major
     const weekW = (100 / WINDOW_WEEKS).toFixed(6) + "%";
     const majorW = (100 / (WINDOW_WEEKS/4)).toFixed(6) + "%";
     return (
@@ -159,10 +336,43 @@ export function initGantt(mountEl, opts = {}){
     return Math.max(0, Math.min(100, n));
   }
 
+  function escapeHtml(s){
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+      .replace(/\"/g,"&quot;").replace(/'/g,"&#039;");
+  }
+
+  function appendLines(lane, windowStart, windowEnd){
+    const today = new Date();
+
+    const addLine = (date, cls, tagText)=>{
+      if(!(date instanceof Date) || isNaN(date)) return;
+      if(date < windowStart || date > windowEnd) return;
+
+      const off = (date - windowStart) / 86400000;
+      const pct = (off / WINDOW_DAYS) * 100;
+
+      const line = document.createElement("div");
+      line.className = `vline ${cls}`;
+      line.style.left = `${pct}%`;
+
+      const tag = document.createElement("div");
+      tag.className = `vtag ${cls}`;
+      tag.style.left = `${pct}%`;
+      tag.textContent = tagText;
+
+      lane.appendChild(line);
+      lane.appendChild(tag);
+    };
+
+    addLine(today, "today", "Today");
+    if(state.runwayDate instanceof Date && !isNaN(state.runwayDate)){
+      addLine(state.runwayDate, "runway", "Runway");
+    }
+  }
+
   function render(){
     elTitle.textContent = state.title || "Select a project";
     elMsg.textContent = "";
-
     elGrid.innerHTML = "";
 
     if(!state.stages || !state.stages.length){
@@ -179,12 +389,13 @@ export function initGantt(mountEl, opts = {}){
 
     const totalSpan = Math.max(0, daysBetween(min, max));
     let maxStart = Math.max(0, totalSpan - WINDOW_DAYS);
-    maxStart = Math.floor(maxStart / 28) * 28;
+    maxStart = Math.floor(maxStart / SLIDER_STEP_DAYS) * SLIDER_STEP_DAYS;
     ganttMaxStart = maxStart;
 
     elSlider.min = "0";
     elSlider.max = String(ganttMaxStart);
-    elSlider.step = "28";
+    elSlider.step = String(SLIDER_STEP_DAYS);
+
     if(ganttOffset > ganttMaxStart) ganttOffset = ganttMaxStart;
     elSlider.value = String(ganttOffset);
     elSlider.disabled = ganttMaxStart <= 0;
@@ -200,10 +411,11 @@ export function initGantt(mountEl, opts = {}){
     // Header
     const headL = document.createElement("div");
     headL.className = "gHeadL";
-    headL.innerHTML = `<b style="width:64px;">Stage</b><b style="width:72px; text-align:right;">Deliv.</b><b style="margin-left:auto;">Alert / PP</b>`;
+    headL.innerHTML = `<b style="width:64px;">Stage</b><b style="width:84px; text-align:right;">Deliv.</b><b style="margin-left:auto;">Alert / PP</b>`;
 
     const headR = document.createElement("div");
     headR.className = "gHeadR";
+
     const stack = document.createElement("div");
     stack.className = "headStack";
 
@@ -234,7 +446,7 @@ export function initGantt(mountEl, opts = {}){
     elGrid.appendChild(headL);
     elGrid.appendChild(headR);
 
-    // Project PP row (above stages)
+    // Project PP row
     {
       const left = document.createElement("div");
       left.className = "gCellL";
@@ -254,20 +466,21 @@ export function initGantt(mountEl, opts = {}){
       right.className = "gCellR";
       right.style.setProperty("--gridBg", gridBg);
 
-      // draw a full-width project PP progress bar band
       const lane = document.createElement("div");
       lane.className = "lane";
 
+      // background band
       const band = document.createElement("div");
       band.className = "bar";
       band.style.left = "0%";
       band.style.width = "100%";
+      const innerBand = document.createElement("div");
+      innerBand.className = "barInner";
+      innerBand.style.background = "rgba(255,255,255,0.06)";
+      band.appendChild(innerBand);
+      lane.appendChild(band);
 
-      const inner = document.createElement("div");
-      inner.className = "barInner";
-      inner.style.background = "rgba(255,255,255,0.06)";
-      band.appendChild(inner);
-
+      // PP fill
       if(pp != null){
         const fill = document.createElement("div");
         fill.className = "bar";
@@ -275,24 +488,22 @@ export function initGantt(mountEl, opts = {}){
         fill.style.width = `${pp}%`;
         fill.style.top = "6px";
         fill.style.bottom = "6px";
-        fill.style.borderRadius = "10px";
+        fill.style.borderRadius = "12px";
         fill.style.boxShadow = "none";
-        fill.style.background = "var(--pp)";
-        lane.appendChild(fill);
+
+        const inner = document.createElement("div");
+        inner.className = "barInner";
+        inner.style.background = "var(--pp)";
+        fill.appendChild(inner);
 
         const lbl = document.createElement("div");
-        lbl.className = "barLabel in";
+        lbl.className = (pp >= 12) ? "barLabel in" : "barLabel out";
         lbl.textContent = `${Math.round(pp)}%`;
-        // if very small, put outside
-        if(pp < 12){
-          lbl.className = "barLabel out";
-        }
         fill.appendChild(lbl);
+
+        lane.appendChild(fill);
       }
 
-      lane.appendChild(band);
-
-      // add today/runway lines
       appendLines(lane, windowStart, windowEnd);
 
       right.appendChild(lane);
@@ -305,12 +516,11 @@ export function initGantt(mountEl, opts = {}){
       const left = document.createElement("div");
       left.className = "gCellL";
 
-      const done = (s.deliverDone == null && s.deliverRemain == null)
+      const delText = (s.deliverDone == null && s.deliverRemain == null)
         ? "—"
         : `${Number(s.deliverDone||0)}/${Number(s.deliverRemain||0)}`;
 
       const pp = safePct(s.stagePP);
-
       const alertKind = s.alert?.kind || "";
       const alertText = s.alert?.text || "";
 
@@ -321,7 +531,7 @@ export function initGantt(mountEl, opts = {}){
       left.innerHTML = `
         <div class="leftMain">
           <div class="stageName">${escapeHtml(s.label)}</div>
-          <div class="deliver" title="Sent / Remaining deliverables">${escapeHtml(done)}</div>
+          <div class="deliver" title="Sent / Remaining deliverables">${escapeHtml(delText)}</div>
           <div style="display:flex; align-items:center; gap:10px; margin-left:auto;">
             ${alertHtml}
             <div class="ppCircle" title="Stage progress">${pp == null ? "—" : `<span>${Math.round(pp)}%</span>`}</div>
@@ -336,7 +546,6 @@ export function initGantt(mountEl, opts = {}){
       const lane = document.createElement("div");
       lane.className = "lane";
 
-      // today & runway lines per lane
       appendLines(lane, windowStart, windowEnd);
 
       if(s.start || s.end){
@@ -373,27 +582,24 @@ export function initGantt(mountEl, opts = {}){
             const cs = Math.max(0, Math.min(WINDOW_DAYS, extStartOff));
             const ce = Math.max(0, Math.min(WINDOW_DAYS, extEndOff));
 
-            const l = (cs / WINDOW_DAYS) * 100;
-            const w = (Math.max(ce - cs, 1) / WINDOW_DAYS) * 100;
+            const hatchLeftPct = (cs / WINDOW_DAYS) * 100;
+            const hatchWidthPct = (Math.max(ce - cs, 1) / WINDOW_DAYS) * 100;
 
             const hatch = document.createElement("div");
             hatch.className = "extHatch";
-            hatch.style.left = `${l - leftPct}%`;     // relative inside bar
-            hatch.style.width = `${w}%`;
+            hatch.style.left = `${hatchLeftPct - leftPct}%`;
+            hatch.style.width = `${hatchWidthPct}%`;
             hatch.style.backgroundColor = disciplineVar(s.discipline);
             hatch.style.opacity = "0.55";
             bar.appendChild(hatch);
           }
         }
 
-        // Label inside if fits, else outside
-        const lbl = document.createElement("div");
         const inside = widthPct >= 10;
+        const lbl = document.createElement("div");
         lbl.className = "barLabel " + (inside ? "in" : "out");
         lbl.textContent = s.label;
         bar.appendChild(lbl);
-
-        bar.title = `${s.label} • ${s.discipline}`;
 
         lane.appendChild(bar);
       }
@@ -404,43 +610,8 @@ export function initGantt(mountEl, opts = {}){
     }
   }
 
-  function appendLines(lane, windowStart, windowEnd){
-    const today = new Date();
-    const addLine = (date, cls, tagText)=>{
-      if(!(date instanceof Date) || isNaN(date)) return;
-      if(date < windowStart || date > windowEnd) return;
-
-      const off = (date - windowStart) / 86400000;
-      const pct = (off / (WINDOW_DAYS)) * 100;
-
-      const line = document.createElement("div");
-      line.className = `vline ${cls}`;
-      line.style.left = `${pct}%`;
-
-      const tag = document.createElement("div");
-      tag.className = `vtag ${cls}`;
-      tag.style.left = `${pct}%`;
-      tag.textContent = tagText;
-
-      lane.appendChild(line);
-      lane.appendChild(tag);
-    };
-
-    addLine(today, "today", "Today");
-
-    if(state.runwayDate instanceof Date && !isNaN(state.runwayDate)){
-      addLine(state.runwayDate, "runway", "Runway");
-    }
-  }
-
-  function escapeHtml(s){
-    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
-      .replace(/\"/g,"&quot;").replace(/'/g,"&#039;");
-  }
-
   function setData(next){
     state = { ...state, ...next };
-    // reset offset when project changes
     ganttOffset = 0;
     render();
   }
@@ -450,8 +621,6 @@ export function initGantt(mountEl, opts = {}){
     render();
   }
 
-  // first render
   render();
-
   return { setData, setRunway };
 }
