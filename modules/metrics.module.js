@@ -1,435 +1,321 @@
-export function initGantt(mountEl, opts = {}){
-  const WINDOW_WEEKS = 52;
-  const WINDOW_DAYS = WINDOW_WEEKS * 7;
-  const SLIDER_STEP_DAYS = 28; // 4 weeks
+export function initMetrics(mountEl, opts = {}){
+  const onRunwaySimulated = opts.onRunwaySimulated || (()=>{});
 
-  const fmtWindow = opts.fmtWindow || ((a,b)=>`${a.toISOString().slice(0,10)} → ${b.toISOString().slice(0,10)}`);
+  let chart = null;
 
   let state = {
-    title: "Select a project",
-    projectPP: 0,
-    stages: [],
-    runwayDate: null
+    title: "",
+    hours: { AH:0, TCH:0, BH:0 },
+    people: [],
+    runway: null
   };
 
-  let ganttMinDate = null;
-  let ganttMaxStart = 0;
-  let ganttOffset = 0;
-
-  // Build DOM skeleton
   mountEl.innerHTML = `
-    <div class="ganttTopRow">
-      <div class="ganttTitle">
-        <b id="gTitle">Select a project</b>
+    <div style="display:flex; flex-direction:column; gap:14px;">
+
+      <div>
+        <b style="font-size:13px;">Hours utilization</b>
+        <div class="note" style="margin-top:6px;">Bar fills by TCH vs AH. If TCH exceeds AH, the extra is hatched.</div>
+
+        <div id="hoursBar" style="
+          margin-top:10px;
+          border:1px solid rgba(255,255,255,0.10);
+          border-radius:14px;
+          background: rgba(0,0,0,0.10);
+          padding:10px;
+        "></div>
       </div>
 
-      <div class="ganttControlsRow">
-        <input id="gSlider" type="range" min="0" max="0" value="0" step="${SLIDER_STEP_DAYS}" disabled />
-        <span id="gWindow" class="pill">—</span>
+      <div style="border-top:1px solid rgba(255,255,255,0.06); padding-top:14px;">
+        <b style="font-size:13px;">Deployment (DYT)</b>
+        <div class="note" style="margin-top:6px;">Shows absolute percentages as in your file. Unallocated is shown as the remaining % to 100.</div>
 
-        <div class="legend" title="Stage colors by discipline">
-          <div class="legItem"><span class="sw" style="background:var(--arch)"></span>Architecture</div>
-          <div class="legItem"><span class="sw" style="background:var(--interior)"></span>Interior</div>
-          <div class="legItem"><span class="sw" style="background:var(--land)"></span>Landscape</div>
+        <div style="display:grid; grid-template-columns: 180px 1fr; gap:10px; align-items:center; margin-top:10px;">
+          <canvas id="deployChart" height="170"></canvas>
+          <div id="deployLegend" style="
+            border:1px solid rgba(255,255,255,0.10);
+            border-radius:12px;
+            padding:10px;
+            max-height: 210px;
+            overflow:auto;
+            background: rgba(0,0,0,0.10);
+          "></div>
         </div>
       </div>
-    </div>
 
-    <div class="ganttOuter">
-      <div class="ganttScroll">
-        <div id="gGrid" class="ganttGrid"></div>
+      <div style="border-top:1px solid rgba(255,255,255,0.06); padding-top:14px;">
+        <b style="font-size:13px;">Runway simulator</b>
+        <div class="note" style="margin-top:6px;">
+          Edit each person’s % (absolute). Runway = BH ÷ ((sum(%)/100) × 174.25).
+        </div>
+
+        <div id="runwaySummary" style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;"></div>
+
+        <div id="simList" style="
+          margin-top:10px;
+          border:1px solid rgba(255,255,255,0.10);
+          border-radius:12px;
+          background: rgba(0,0,0,0.10);
+          overflow:hidden;
+        "></div>
+
+        <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+          <button id="resetSim" type="button" style="
+            border:1px solid rgba(255,255,255,0.12);
+            background:#0f172a;
+            color:rgba(255,255,255,0.86);
+            border-radius:12px;
+            padding:10px 12px;
+            cursor:pointer;
+          ">Reset to file values</button>
+        </div>
       </div>
-    </div>
 
-    <div class="note" id="gMsg"></div>
+    </div>
   `;
 
-  const elTitle = mountEl.querySelector("#gTitle");
-  const elSlider = mountEl.querySelector("#gSlider");
-  const elWindow = mountEl.querySelector("#gWindow");
-  const elGrid = mountEl.querySelector("#gGrid");
-  const elMsg = mountEl.querySelector("#gMsg");
+  const elHoursBar = mountEl.querySelector("#hoursBar");
+  const elDeployLegend = mountEl.querySelector("#deployLegend");
+  const elRunwaySummary = mountEl.querySelector("#runwaySummary");
+  const elSimList = mountEl.querySelector("#simList");
+  const elReset = mountEl.querySelector("#resetSim");
 
-  elSlider.oninput = ()=>{
-    ganttOffset = Number(elSlider.value || 0);
-    ganttOffset = Math.round(ganttOffset / SLIDER_STEP_DAYS) * SLIDER_STEP_DAYS;
-    elSlider.value = String(ganttOffset);
-    render();
-  };
+  let baselinePeople = [];    // from file
+  let simPeople = [];         // editable
 
-  function monthShort(d){
-    return d.toLocaleString(undefined, { month:"short" });
+  function fmt(n){
+    if(!Number.isFinite(n)) return "0";
+    return new Intl.NumberFormat(undefined,{maximumFractionDigits:1}).format(n);
   }
 
-  // Fiscal quarter (Apr-Mar)
-  function fiscalQuarter(d){
-    const m = d.getMonth(); // 0=Jan
-    if(m >= 3 && m <= 5) return "Q1";     // Apr-Jun
-    if(m >= 6 && m <= 8) return "Q2";     // Jul-Sep
-    if(m >= 9 && m <= 11) return "Q3";    // Oct-Dec
-    return "Q4";                          // Jan-Mar
-  }
+  function computeRunway(people, BH){
+    const factorDecimal = people.reduce((s,p)=>s + (p.pct/100), 0);
+    const monthlyBurn = factorDecimal * 174.25;
 
-  function buildMonthSegments(windowStart, windowEnd){
-    const segs=[];
-    let cur = new Date(windowStart.getFullYear(), windowStart.getMonth(), 1);
-    if(cur > windowStart) cur = new Date(windowStart.getFullYear(), windowStart.getMonth(), 1);
-    // move cur to the windowStart month boundary
-    cur = new Date(windowStart.getFullYear(), windowStart.getMonth(), 1);
+    if(!Number.isFinite(monthlyBurn) || monthlyBurn <= 0) return { runwayMonths: null, runwayDate: null, factorDecimal, monthlyBurn };
+    if(!Number.isFinite(BH) || BH <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
 
-    // ensure start at windowStart for segment day counting
-    let segStart = new Date(windowStart);
+    const runwayMonths = BH / monthlyBurn;
+    if(!Number.isFinite(runwayMonths) || runwayMonths <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
 
-    while(segStart < windowEnd){
-      const nextMonth = new Date(segStart.getFullYear(), segStart.getMonth()+1, 1);
-      const segEnd = nextMonth < windowEnd ? nextMonth : windowEnd;
-      const days = Math.max(1, Math.round((segEnd - segStart)/86400000));
-      segs.push({
-        label: `${monthShort(segStart)} ${segStart.getFullYear()}`,
-        days,
-        q: fiscalQuarter(segStart)
-      });
-      segStart = segEnd;
-    }
-    return segs;
-  }
-
-  function buildQuarterSegments(monthSegs){
-    const out=[];
-    for(const seg of monthSegs){
-      const last = out[out.length-1];
-      if(last && last.q === seg.q){
-        last.days += seg.days;
-      } else {
-        out.push({ q: seg.q, days: seg.days });
-      }
-    }
-    return out;
-  }
-
-  function daysBetween(a,b){ return Math.round((b-a)/86400000); }
-
-  function computeMinMaxDates(){
     const today = new Date();
-    const dates = [];
+    const days = runwayMonths * 30.4375;
+    const runwayDate = new Date(today.getTime() + days * 86400000);
 
-    if(state.runwayDate instanceof Date && !isNaN(state.runwayDate)) dates.push(state.runwayDate);
-    dates.push(today);
-
-    for(const s of state.stages){
-      if(s.start instanceof Date && !isNaN(s.start)) dates.push(s.start);
-      if(s.end instanceof Date && !isNaN(s.end)) dates.push(s.end);
-      if(s.extEnd instanceof Date && !isNaN(s.extEnd)) dates.push(s.extEnd);
-    }
-
-    if(!dates.length) return { min:null, max:null };
-
-    const min = new Date(Math.min(...dates.map(d=>d.getTime())));
-    const max = new Date(Math.max(...dates.map(d=>d.getTime())));
-    return { min, max };
+    return { runwayMonths, runwayDate, factorDecimal, monthlyBurn };
   }
 
-  function setWindowLabel(windowStart){
-    if(!windowStart){
-      elWindow.textContent = "—";
+  // Hours bar: TCH fill inside AH track; if exceed, hatch outside
+  function renderHoursUtil(hours){
+    const AH = Math.max(0, Number(hours?.AH || 0));
+    const TCH = Math.max(0, Number(hours?.TCH || 0));
+    const BH = Number(hours?.BH || 0);
+
+    const exceed = Math.max(0, TCH - AH);
+    const within = Math.min(AH, TCH);
+
+    // scale: use AH as base. if exceed, show extra zone to the right (up to 35% extra)
+    const base = Math.max(AH, 1);
+    const maxExtra = Math.max(exceed, 0);
+    const extraCap = base * 0.35;
+    const shownExtra = Math.min(maxExtra, extraCap);
+    const totalScale = base + shownExtra;
+
+    const withinPct = (within / totalScale) * 100;
+    const basePct = (AH / totalScale) * 100;
+    const exceedPct = (shownExtra / totalScale) * 100;
+
+    const insideLabel = (pct)=> pct >= 14;
+
+    elHoursBar.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;">
+        <span class="pill">AH: ${fmt(AH)}</span>
+        <span class="pill">TCH: ${fmt(TCH)}</span>
+        <span class="pill">BH: ${fmt(BH)}</span>
+      </div>
+
+      <div style="
+        position:relative;
+        height:20px;
+        border-radius:999px;
+        background: rgba(255,255,255,0.06);
+        border:1px solid rgba(255,255,255,0.10);
+        overflow:visible;
+      ">
+        <!-- AH marker (end of base) -->
+        <div style="position:absolute; left:${basePct}%; top:-6px; bottom:-6px; width:2px; background:rgba(255,255,255,0.25);"></div>
+
+        <!-- Within fill -->
+        <div id="withinSeg" style="
+          position:absolute; left:0; top:0; bottom:0;
+          width:${withinPct}%;
+          border-radius:999px;
+          background: rgba(90, 173, 255, 0.92);
+          display:flex; align-items:center;
+          justify-content:${insideLabel(withinPct) ? "center" : "flex-start"};
+        ">
+          ${insideLabel(withinPct)
+            ? `<span style="font-size:11px; color:rgba(255,255,255,0.95); padding:0 8px; white-space:nowrap;">${fmt(within)}</span>`
+            : `<span style="position:absolute; left:calc(${withinPct}% + 8px); font-size:11px; color:rgba(255,255,255,0.85); white-space:nowrap;">${fmt(within)}</span>`
+          }
+        </div>
+
+        <!-- Exceed hatched -->
+        ${exceed > 0 ? `
+          <div id="exceedSeg" style="
+            position:absolute;
+            left:${basePct}%;
+            top:0; bottom:0;
+            width:${exceedPct}%;
+            border-radius:999px;
+            background-image: repeating-linear-gradient(
+              45deg,
+              rgba(255,255,255,0.00) 0 6px,
+              rgba(255,255,255,0.28) 6px 9px
+            );
+            background-color: rgba(255,122,122,0.70);
+            border:1px solid rgba(255,122,122,0.30);
+            display:flex; align-items:center;
+            justify-content:${insideLabel(exceedPct) ? "center" : "flex-start"};
+          ">
+            ${insideLabel(exceedPct)
+              ? `<span style="font-size:11px; color:rgba(255,255,255,0.95); padding:0 8px; white-space:nowrap;">+${fmt(exceed)}</span>`
+              : `<span style="position:absolute; left:calc(${basePct + exceedPct}% + 8px); font-size:11px; color:rgba(255,255,255,0.85); white-space:nowrap;">+${fmt(exceed)}</span>`
+            }
+          </div>
+        ` : ``}
+      </div>
+    `;
+  }
+
+  function destroyChart(){
+    if(chart){ chart.destroy(); chart=null; }
+  }
+
+  // Deployment donut with ABSOLUTE %: add Unallocated or Over-allocated slice
+  function renderDeploymentChart(people){
+    destroyChart();
+
+    const top = (people || []).slice(0, 12);
+    const total = top.reduce((s,p)=>s+p.pct, 0);
+
+    const labels = top.map(p=>p.name);
+    const values = top.map(p=>p.pct);
+
+    // Add remainder to 100
+    const remainder = 100 - total;
+    if(remainder > 0){
+      labels.push("Unallocated");
+      values.push(remainder);
+    } else if(remainder < 0){
+      labels.push("Over-allocated");
+      values.push(Math.abs(remainder));
+    }
+
+    const canvas = mountEl.querySelector("#deployChart");
+    if(!labels.length){
+      elDeployLegend.innerHTML = `<div class="note">No deployment data.</div>`;
       return;
     }
-    const windowEnd = new Date(windowStart.getTime() + WINDOW_DAYS*86400000);
-    elWindow.textContent = fmtWindow(windowStart, windowEnd);
-  }
 
-  function gridBackground(){
-    // weekly + 4-week major
-    const weekW = (100 / WINDOW_WEEKS).toFixed(6) + "%";
-    const majorW = (100 / (WINDOW_WEEKS/4)).toFixed(6) + "%";
-    return (
-      `repeating-linear-gradient(to right, rgba(255,255,255,0.06) 0 1px, transparent 1px ${weekW}),` +
-      `repeating-linear-gradient(to right, rgba(255,255,255,0.12) 0 1px, transparent 1px ${majorW})`
-    );
-  }
-
-  function disciplineVar(d){
-    if(d === "Interior") return "var(--interior)";
-    if(d === "Landscape") return "var(--land)";
-    return "var(--arch)";
-  }
-
-  function safePct(n){
-    if(!Number.isFinite(n)) return null;
-    return Math.max(0, Math.min(100, n));
-  }
-
-  function render(){
-    elTitle.textContent = state.title || "Select a project";
-    elMsg.textContent = "";
-
-    elGrid.innerHTML = "";
-
-    if(!state.stages || !state.stages.length){
-      elMsg.textContent = "Upload a file, pick a project, and your timeline will appear here.";
-      ganttMinDate = null;
-      elSlider.disabled = true;
-      elSlider.min = "0"; elSlider.max = "0"; elSlider.value = "0";
-      setWindowLabel(null);
-      return;
-    }
-
-    const { min, max } = computeMinMaxDates();
-    ganttMinDate = min;
-
-    const totalSpan = Math.max(0, daysBetween(min, max));
-    let maxStart = Math.max(0, totalSpan - WINDOW_DAYS);
-    maxStart = Math.floor(maxStart / 28) * 28;
-    ganttMaxStart = maxStart;
-
-    elSlider.min = "0";
-    elSlider.max = String(ganttMaxStart);
-    elSlider.step = "28";
-    if(ganttOffset > ganttMaxStart) ganttOffset = ganttMaxStart;
-    elSlider.value = String(ganttOffset);
-    elSlider.disabled = ganttMaxStart <= 0;
-
-    const windowStart = new Date(ganttMinDate.getTime() + ganttOffset*86400000);
-    const windowEnd = new Date(windowStart.getTime() + WINDOW_DAYS*86400000);
-    setWindowLabel(windowStart);
-
-    const monthSegs = buildMonthSegments(windowStart, windowEnd);
-    const quarterSegs = buildQuarterSegments(monthSegs);
-    const gridBg = gridBackground();
-
-    // Header
-    const headL = document.createElement("div");
-    headL.className = "gHeadL";
-    headL.innerHTML = `<b style="width:64px;">Stage</b><b style="width:72px; text-align:right;">Deliv.</b><b style="margin-left:auto;">Alert / PP</b>`;
-
-    const headR = document.createElement("div");
-    headR.className = "gHeadR";
-    const stack = document.createElement("div");
-    stack.className = "headStack";
-
-    const qRow = document.createElement("div");
-    qRow.className = "qRow";
-    for(const q of quarterSegs){
-      const div = document.createElement("div");
-      div.className = "qSeg";
-      div.style.flex = String(q.days);
-      div.textContent = q.q;
-      qRow.appendChild(div);
-    }
-
-    const mRow = document.createElement("div");
-    mRow.className = "mRow";
-    for(const seg of monthSegs){
-      const div = document.createElement("div");
-      div.className = "mSeg";
-      div.style.flex = String(seg.days);
-      div.textContent = seg.label; // "Oct 2026"
-      mRow.appendChild(div);
-    }
-
-    stack.appendChild(qRow);
-    stack.appendChild(mRow);
-    headR.appendChild(stack);
-
-    elGrid.appendChild(headL);
-    elGrid.appendChild(headR);
-
-    // Project PP row (above stages)
-    {
-      const left = document.createElement("div");
-      left.className = "gCellL";
-      const pp = safePct(state.projectPP);
-      left.innerHTML = `
-        <div class="leftMain">
-          <div class="stageName">PP</div>
-          <div class="deliver">—</div>
-          <div style="display:flex; gap:10px; align-items:center; margin-left:auto;">
-            <div class="alert" title="Project progress shown on timeline">Project</div>
-            <div class="ppCircle" title="Project progress">${pp == null ? "—" : `<span>${Math.round(pp)}%</span>`}</div>
-          </div>
-        </div>
-      `;
-
-      const right = document.createElement("div");
-      right.className = "gCellR";
-      right.style.setProperty("--gridBg", gridBg);
-
-      // draw a full-width project PP progress bar band
-      const lane = document.createElement("div");
-      lane.className = "lane";
-
-      const band = document.createElement("div");
-      band.className = "bar";
-      band.style.left = "0%";
-      band.style.width = "100%";
-
-      const inner = document.createElement("div");
-      inner.className = "barInner";
-      inner.style.background = "rgba(255,255,255,0.06)";
-      band.appendChild(inner);
-
-      if(pp != null){
-        const fill = document.createElement("div");
-        fill.className = "bar";
-        fill.style.left = "0%";
-        fill.style.width = `${pp}%`;
-        fill.style.top = "6px";
-        fill.style.bottom = "6px";
-        fill.style.borderRadius = "10px";
-        fill.style.boxShadow = "none";
-        fill.style.background = "var(--pp)";
-        lane.appendChild(fill);
-
-        const lbl = document.createElement("div");
-        lbl.className = "barLabel in";
-        lbl.textContent = `${Math.round(pp)}%`;
-        // if very small, put outside
-        if(pp < 12){
-          lbl.className = "barLabel out";
-        }
-        fill.appendChild(lbl);
-      }
-
-      lane.appendChild(band);
-
-      // add today/runway lines
-      appendLines(lane, windowStart, windowEnd);
-
-      right.appendChild(lane);
-      elGrid.appendChild(left);
-      elGrid.appendChild(right);
-    }
-
-    // Stage rows
-    for(const s of state.stages){
-      const left = document.createElement("div");
-      left.className = "gCellL";
-
-      const done = (s.deliverDone == null && s.deliverRemain == null)
-        ? "—"
-        : `${Number(s.deliverDone||0)}/${Number(s.deliverRemain||0)}`;
-
-      const pp = safePct(s.stagePP);
-
-      const alertKind = s.alert?.kind || "";
-      const alertText = s.alert?.text || "";
-
-      const alertHtml = alertText
-        ? `<div class="alert ${alertKind}">${escapeHtml(alertText)}</div>`
-        : `<div class="alert" style="opacity:.35;">—</div>`;
-
-      left.innerHTML = `
-        <div class="leftMain">
-          <div class="stageName">${escapeHtml(s.label)}</div>
-          <div class="deliver" title="Sent / Remaining deliverables">${escapeHtml(done)}</div>
-          <div style="display:flex; align-items:center; gap:10px; margin-left:auto;">
-            ${alertHtml}
-            <div class="ppCircle" title="Stage progress">${pp == null ? "—" : `<span>${Math.round(pp)}%</span>`}</div>
-          </div>
-        </div>
-      `;
-
-      const right = document.createElement("div");
-      right.className = "gCellR";
-      right.style.setProperty("--gridBg", gridBg);
-
-      const lane = document.createElement("div");
-      lane.className = "lane";
-
-      // today & runway lines per lane
-      appendLines(lane, windowStart, windowEnd);
-
-      if(s.start || s.end){
-        const a = s.start || s.end;
-        const b = s.end || s.start;
-        const start = (a <= b) ? a : b;
-        const end = (a <= b) ? b : a;
-
-        const startOff = (start - windowStart) / 86400000;
-        const endOff = (end - windowStart) / 86400000;
-
-        const clampedStart = Math.max(0, Math.min(WINDOW_DAYS, startOff));
-        const clampedEnd = Math.max(0, Math.min(WINDOW_DAYS, endOff));
-
-        const leftPct = (clampedStart / WINDOW_DAYS) * 100;
-        const widthPct = (Math.max(clampedEnd - clampedStart, 1) / WINDOW_DAYS) * 100;
-
-        const bar = document.createElement("div");
-        bar.className = "bar";
-        bar.style.left = `${leftPct}%`;
-        bar.style.width = `${widthPct}%`;
-
-        const inner = document.createElement("div");
-        inner.className = "barInner";
-        inner.style.background = disciplineVar(s.discipline);
-        bar.appendChild(inner);
-
-        // Ext hatch from planned end -> ext end
-        if(s.extEnd instanceof Date && !isNaN(s.extEnd) && s.end instanceof Date && !isNaN(s.end)){
-          if(s.extEnd.getTime() > s.end.getTime()){
-            const extStartOff = (s.end - windowStart) / 86400000;
-            const extEndOff = (s.extEnd - windowStart) / 86400000;
-
-            const cs = Math.max(0, Math.min(WINDOW_DAYS, extStartOff));
-            const ce = Math.max(0, Math.min(WINDOW_DAYS, extEndOff));
-
-            const l = (cs / WINDOW_DAYS) * 100;
-            const w = (Math.max(ce - cs, 1) / WINDOW_DAYS) * 100;
-
-            const hatch = document.createElement("div");
-            hatch.className = "extHatch";
-            hatch.style.left = `${l - leftPct}%`;     // relative inside bar
-            hatch.style.width = `${w}%`;
-            hatch.style.backgroundColor = disciplineVar(s.discipline);
-            hatch.style.opacity = "0.55";
-            bar.appendChild(hatch);
+    chart = new Chart(canvas, {
+      type:"doughnut",
+      data:{ labels, datasets:[{ data: values }]},
+      options:{
+        responsive:true,
+        plugins:{
+          legend:{ display:false },
+          tooltip:{
+            callbacks:{
+              label:(ctx)=>{
+                const v = Number(ctx.raw || 0);
+                return `${ctx.label}: ${v.toFixed(1)}%`;
+              }
+            }
           }
         }
-
-        // Label inside if fits, else outside
-        const lbl = document.createElement("div");
-        const inside = widthPct >= 10;
-        lbl.className = "barLabel " + (inside ? "in" : "out");
-        lbl.textContent = s.label;
-        bar.appendChild(lbl);
-
-        bar.title = `${s.label} • ${s.discipline}`;
-
-        lane.appendChild(bar);
       }
+    });
 
-      right.appendChild(lane);
-      elGrid.appendChild(left);
-      elGrid.appendChild(right);
-    }
+    // Legend: show absolute %
+    const meta = chart.getDatasetMeta(0);
+    const colors = meta?.data?.map(el => el.options?.backgroundColor) || labels.map(()=> "rgba(255,255,255,0.25)");
+
+    elDeployLegend.innerHTML = labels.map((name, i)=>`
+      <div style="
+        display:flex; align-items:center; justify-content:space-between; gap:10px;
+        padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.06);
+        font-size:12px;
+      ">
+        <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+          <span style="width:10px; height:10px; border-radius:3px; border:1px solid rgba(255,255,255,0.20); background:${colors[i]};"></span>
+          <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px;">${escapeHtml(name)}</span>
+        </div>
+        <div style="color:var(--muted); flex:0 0 auto;">${Number(values[i]).toFixed(1)}%</div>
+      </div>
+    `).join("");
   }
 
-  function appendLines(lane, windowStart, windowEnd){
-    const today = new Date();
-    const addLine = (date, cls, tagText)=>{
-      if(!(date instanceof Date) || isNaN(date)) return;
-      if(date < windowStart || date > windowEnd) return;
+  function renderRunwaySummary(runway){
+    const rm = runway?.runwayMonths;
+    const factor = runway?.factorDecimal;
+    const burn = runway?.monthlyBurn;
 
-      const off = (date - windowStart) / 86400000;
-      const pct = (off / (WINDOW_DAYS)) * 100;
+    const pill = (txt)=>`<span class="pill">${escapeHtml(txt)}</span>`;
 
-      const line = document.createElement("div");
-      line.className = `vline ${cls}`;
-      line.style.left = `${pct}%`;
+    const parts = [];
+    parts.push(pill(`Factor: ${Number.isFinite(factor) ? factor.toFixed(2) : "—"}`));
+    parts.push(pill(`Monthly: ${Number.isFinite(burn) ? burn.toFixed(1) : "—"} hrs`));
 
-      const tag = document.createElement("div");
-      tag.className = `vtag ${cls}`;
-      tag.style.left = `${pct}%`;
-      tag.textContent = tagText;
+    if(rm == null){
+      parts.push(pill(`Runway: —`));
+    } else {
+      parts.push(pill(`Runway: ${rm.toFixed(2)} mo`));
+    }
 
-      lane.appendChild(line);
-      lane.appendChild(tag);
-    };
+    elRunwaySummary.innerHTML = parts.join("");
+  }
 
-    addLine(today, "today", "Today");
+  function renderSimulatorList(){
+    if(!simPeople.length){
+      elSimList.innerHTML = `<div style="padding:10px;" class="note">No editable deployment entries (need Name (xx%) format).</div>`;
+      return;
+    }
 
-    if(state.runwayDate instanceof Date && !isNaN(state.runwayDate)){
-      addLine(state.runwayDate, "runway", "Runway");
+    elSimList.innerHTML = simPeople.map((p, idx)=>`
+      <div style="
+        display:flex; align-items:center; justify-content:space-between; gap:10px;
+        padding:10px 12px;
+        border-bottom:1px solid rgba(255,255,255,0.06);
+      ">
+        <div style="min-width:0;">
+          <div style="font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:240px;">${escapeHtml(p.name)}</div>
+          <div style="font-size:11px; color:var(--muted); margin-top:2px;">Absolute %</div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:8px; flex:0 0 auto;">
+          <input data-idx="${idx}" type="number" min="0" step="0.1" value="${Number(p.pct||0)}" style="
+            width:100px;
+            background:#0f172a; border:1px solid rgba(255,255,255,0.12);
+            color:rgba(255,255,255,0.92);
+            border-radius:12px; padding:8px 10px;
+          " />
+          <span class="pill">%</span>
+        </div>
+      </div>
+    `).join("");
+
+    // hook inputs
+    for(const inp of elSimList.querySelectorAll("input[type=number]")){
+      inp.addEventListener("input", ()=>{
+        const idx = Number(inp.dataset.idx);
+        const v = Number(inp.value);
+        simPeople[idx].pct = Number.isFinite(v) ? Math.max(0, v) : 0;
+
+        const runway = computeRunway(simPeople, state.hours.BH);
+        renderRunwaySummary(runway);
+        onRunwaySimulated(runway);
+      });
     }
   }
 
@@ -438,20 +324,33 @@ export function initGantt(mountEl, opts = {}){
       .replace(/\"/g,"&quot;").replace(/'/g,"&#039;");
   }
 
+  elReset.onclick = ()=>{
+    simPeople = baselinePeople.map(p=>({ ...p }));
+    const runway = computeRunway(simPeople, state.hours.BH);
+    renderRunwaySummary(runway);
+    renderSimulatorList();
+    onRunwaySimulated(runway);
+  };
+
   function setData(next){
     state = { ...state, ...next };
-    // reset offset when project changes
-    ganttOffset = 0;
-    render();
+
+    // hours
+    renderHoursUtil(state.hours);
+
+    // deployment
+    baselinePeople = (state.people || []).map(p=>({ name:p.name, pct:Number(p.pct||0) }));
+    simPeople = baselinePeople.map(p=>({ ...p }));
+
+    renderDeploymentChart(baselinePeople);
+
+    // runway baseline
+    const runway = computeRunway(simPeople, state.hours.BH);
+    renderRunwaySummary(runway);
+    renderSimulatorList();
+
+    onRunwaySimulated(runway);
   }
 
-  function setRunway(date){
-    state.runwayDate = date || null;
-    render();
-  }
-
-  // first render
-  render();
-
-  return { setData, setRunway };
+  return { setData };
 }
