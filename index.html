@@ -5,6 +5,25 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Project Intel</title>
 
+  <!-- Prevent favicon.ico 404 -->
+  <link rel="icon" href="data:," />
+
+  <!-- Fix GitHub Pages "missing trailing slash" causing module path 404 -->
+  <script>
+    (function () {
+      try {
+        const url = new URL(location.href);
+        const p = url.pathname || "";
+        const endsWithHtml = p.endsWith(".html") || p.endsWith(".htm");
+        if (!endsWithHtml && !p.endsWith("/")) {
+          url.pathname = p + "/";
+          location.replace(url.toString());
+        }
+      } catch (e) { /* ignore */ }
+    })();
+  </script>
+
+  <!-- Libs (global Chart, XLSX) -->
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js"></script>
 
@@ -15,7 +34,7 @@
       --chip:#0f172a;
       --chipBorder: rgba(255,255,255,0.10);
 
-      --rowh: 44px;
+      --rowh: 46px;
 
       /* Discipline colors */
       --arch: rgba(90, 173, 255, 0.92);
@@ -48,9 +67,8 @@
       display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
       width:100%;
     }
-    .titleWrap{ display:flex; flex-direction:column; gap:4px; min-width: 180px; }
     h1{ margin:0; font-size:16px; letter-spacing:0.2px; }
-    .sub{ color:var(--muted); font-size:12px; }
+    .sub{ color:var(--muted); font-size:12px; margin-top:4px; }
 
     .controls{
       display:flex; flex-direction:column; gap:10px;
@@ -132,210 +150,6 @@
     }
     .note{ color:var(--muted); font-size:12px; line-height:1.45; margin-top:8px; }
 
-    /* Gantt container */
-    .ganttTopRow{
-      display:flex; align-items:center; justify-content:space-between; gap:10px;
-      margin-bottom:10px;
-      flex-wrap:wrap;
-    }
-    .ganttTitle{
-      display:flex; align-items:baseline; gap:10px; min-width:240px;
-      max-width: 55%;
-    }
-    .ganttTitle b{
-      font-size:14px; font-weight:700; color:var(--text);
-      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-      max-width: 520px;
-    }
-    .ganttTitle span{ color:var(--muted); font-size:12px; }
-
-    .ganttControlsRow{
-      display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end;
-      flex:1 1 auto;
-    }
-    input[type="range"]{ width:min(420px, 100%); accent-color:#9fb0d0; }
-
-    .legend{
-      display:flex; align-items:center; gap:10px;
-      padding:8px 10px;
-      border:1px solid var(--legendBorder);
-      border-radius:12px;
-      background: rgba(0,0,0,0.10);
-    }
-    .legItem{ display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
-    .sw{ width:10px; height:10px; border-radius:4px; border:1px solid rgba(255,255,255,0.18); }
-
-    .ganttOuter{ border:1px solid var(--grid); border-radius:12px; overflow:hidden; background: rgba(0,0,0,0.08); }
-    .ganttScroll{ max-height: calc(100vh - 260px); min-height: 560px; overflow:auto; }
-
-    .ganttGrid{
-      display:grid;
-      grid-template-columns: 340px 1fr;
-      align-items:stretch;
-      min-width: 980px;
-      width:100%;
-    }
-
-    .gHeadL, .gHeadR{
-      height: 56px;
-      position: sticky;
-      top: 0;
-      z-index: 20;
-      display:flex;
-      align-items:stretch;
-      padding: 0;
-      box-sizing:border-box;
-      background: rgba(18,27,47,0.98);
-      border-bottom:1px solid var(--grid);
-    }
-    .gHeadL{ left:0; z-index: 30; border-right:1px solid var(--grid); padding:0 12px; display:flex; align-items:center; }
-    .gHeadL b{ font-size:12px; color:var(--muted); font-weight:600; }
-
-    .headStack{ width:100%; display:flex; flex-direction:column; }
-    .qRow, .mRow{
-      display:flex; width:100%;
-      font-size:11px; color:var(--muted);
-      user-select:none;
-      line-height:1;
-    }
-    .qSeg, .mSeg{
-      border-left:1px solid rgba(255,255,255,0.06);
-      padding:6px 8px;
-      white-space:nowrap;
-      overflow:hidden;
-      text-overflow:ellipsis;
-    }
-    .qSeg{ color: rgba(255,255,255,0.65); font-weight:600; padding-top:7px; padding-bottom:5px; }
-    .mSeg{ padding-top:5px; padding-bottom:7px; }
-
-    .gCellL{
-      height: var(--rowh);
-      border-bottom:1px solid var(--grid);
-      border-right:1px solid var(--grid);
-      display:flex;
-      align-items:center;
-      gap:10px;
-      padding:0 12px;
-      background: rgba(255,255,255,0.01);
-      position: sticky;
-      left: 0;
-      z-index: 10;
-    }
-    .gCellL:nth-of-type(4n+1){ background: rgba(255,255,255,0.02); }
-
-    .leftMain{ display:flex; align-items:center; gap:10px; min-width:0; flex:1 1 auto; }
-    .stageName{ font-size:12px; width:64px; flex:0 0 64px; color:var(--text); }
-    .deliver{ font-size:12px; color:rgba(255,255,255,0.80); width:72px; flex:0 0 72px; text-align:right; }
-    .alert{
-      font-size:11px;
-      padding:5px 8px;
-      border-radius:999px;
-      border:1px solid rgba(255,255,255,0.10);
-      background: rgba(0,0,0,0.15);
-      color: var(--muted);
-      white-space:nowrap;
-      flex:0 0 auto;
-    }
-    .alert.ok{ color: var(--ok); border-color: rgba(139,255,178,0.35); }
-    .alert.bad{ color: var(--bad); border-color: rgba(255,122,122,0.35); }
-    .alert.warn{ color: var(--warn); border-color: rgba(255,209,138,0.35); }
-
-    .ppCircle{
-      width:34px; height:34px; border-radius:999px;
-      display:flex; align-items:center; justify-content:center;
-      font-size:11px;
-      color: rgba(255,255,255,0.95);
-      border:1px solid rgba(255,255,255,0.18);
-      background: rgba(0,0,0,0.18);
-      flex:0 0 auto;
-    }
-    .ppCircle span{ font-variant-numeric: tabular-nums; }
-
-    .gCellR{
-      height: var(--rowh);
-      border-bottom:1px solid var(--grid);
-      position:relative;
-      background: rgba(255,255,255,0.02);
-      background-image: var(--gridBg);
-      background-repeat: repeat;
-      background-size: auto 100%;
-      overflow:hidden;
-    }
-    .lane{ position:absolute; left:0; right:0; top:0; bottom:0; }
-
-    .bar{
-      position:absolute;
-      left:0;
-      top:2px;
-      bottom:2px;
-      border-radius: 10px;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.25);
-      overflow:visible;
-    }
-    .barInner{
-      position:absolute; inset:0;
-      border-radius: 10px;
-    }
-    .barLabel{
-      position:absolute;
-      top:50%;
-      transform:translateY(-50%);
-      font-size:11px;
-      color: rgba(255,255,255,0.95);
-      background: rgba(0,0,0,0.20);
-      padding:2px 8px;
-      border-radius:999px;
-      white-space:nowrap;
-      pointer-events:none;
-    }
-    .barLabel.in{ right:10px; }
-    .barLabel.out{
-      left: calc(100% + 8px);
-      right:auto;
-      background: rgba(0,0,0,0.10);
-      border:1px solid rgba(255,255,255,0.10);
-    }
-
-    .extHatch{
-      position:absolute;
-      top:0; bottom:0;
-      border-radius: 10px;
-      background-image: repeating-linear-gradient(
-        45deg,
-        rgba(255,255,255,0.00) 0 6px,
-        rgba(255,255,255,0.18) 6px 9px
-      );
-      mix-blend-mode: overlay;
-      pointer-events:none;
-    }
-
-    .vline{
-      position:absolute;
-      top:0; bottom:0;
-      width:2px;
-      pointer-events:none;
-      opacity:1;
-      z-index: 5;
-    }
-    .vline.today{ background: var(--todayLine); }
-    .vline.runway{ background: var(--runwayLine); }
-    .vtag{
-      position:absolute;
-      top:6px;
-      transform: translateX(-50%);
-      font-size:11px;
-      padding:2px 7px;
-      border-radius:999px;
-      background: rgba(0,0,0,0.18);
-      border:1px solid rgba(255,255,255,0.10);
-      color: rgba(255,255,255,0.85);
-      pointer-events:none;
-      z-index: 6;
-      white-space:nowrap;
-    }
-    .vtag.runway{ color: var(--warn); border-color: rgba(255,209,138,0.30); }
-
-    /* Raw table */
     table{ width:100%; border-collapse:collapse; font-size:12px; }
     th,td{ border-bottom:1px solid var(--grid); padding:8px 6px; text-align:left; vertical-align:top; }
     th{ color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--card); }
@@ -345,9 +159,9 @@
 <body>
 <header>
   <div class="topbar">
-    <div class="titleWrap">
+    <div>
       <h1>Project Intel</h1>
-      <div class="sub">Single-repo modular build (Gantt + Metrics)</div>
+      <div class="sub">Hosted on GitHub Pages • modular files</div>
     </div>
 
     <div class="controls">
@@ -402,7 +216,7 @@
   </div>
 </div>
 
+<!-- IMPORTANT: keep this relative (./app.js) -->
 <script type="module" src="./app.js"></script>
 </body>
 </html>
-
