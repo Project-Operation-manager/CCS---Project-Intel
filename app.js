@@ -19,7 +19,6 @@ function startApp(){
     "DC","CO"
   ];
 
-  // Discipline mapping
   const DISCIPLINE = {
     Architecture: new Set(["CD1","CD2","CD5","SD1","SD2","AD","DD1","DD2","TD1","TD2","TD3","WD20","WD40","WD60"]),
     Interior:     new Set(["CD3","SD3","DD3","TD4","WD100"]),
@@ -31,6 +30,9 @@ function startApp(){
     projectName:   ["Project Name","Project","Name","ProjectName"],
     teamName:      ["Team","Team Name","TeamName","TEAM","Team/Name","Team_Name","Team - Name"],
 
+    // NEW: built-up area (we'll display this on dashboard header)
+    builtUpArea:   ["Built up area","Built-up area","BuiltUpArea","BUA","Built Up Area","Builtup Area","Built Up","Area"],
+
     allottedHours: ["AH","Allotted hours","Allotted Hours","Allotted","Allocated hours","Allocated Hours"],
     consumedHours: ["TCH","Total consumed hours","Total Consumed Hours","Consumed hours","Consumed Hours","Consumed"],
     balanceHours:  ["BH","Balanced hours","Balance hours","Balance Hours","Balance"],
@@ -39,7 +41,6 @@ function startApp(){
     progress:      ["PP","Project progress","Project progess","Progress"],
   };
 
-  // ---- helpers
   function normalizeKey(k){
     return String(k||"").replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s_-]+/g,"");
   }
@@ -64,6 +65,7 @@ function startApp(){
     return out;
   }
   function uniq(arr){ return Array.from(new Set(arr)); }
+  function clamp(n,a,b){ return Math.max(a, Math.min(b,n)); }
 
   function toNumber(v){
     if(v==null) return 0;
@@ -88,7 +90,6 @@ function startApp(){
     if(n > 0 && n <= 1) return n * 100;
     return n;
   }
-  function clamp(n,a,b){ return Math.max(a, Math.min(b,n)); }
 
   function parseDate(v){
     if(v==null) return null;
@@ -178,7 +179,6 @@ function startApp(){
     return rt === String(activeTeam||"").trim().toLowerCase();
   }
 
-  // Deployment parsing: keep ABSOLUTE percentages exactly as written
   function parseDeploymentCell(v){
     const s=String(v||"").trim(); if(!s) return [];
     return s.split(",")
@@ -422,6 +422,10 @@ function startApp(){
   }
 
   // ---- DOM
+  const elTitle = document.getElementById("appTitle");
+  const elSub = document.getElementById("appSub");
+  const elControlsPanel = document.getElementById("controlsPanel");
+
   const elFile = document.getElementById("file");
   const elStatus = document.getElementById("status");
   const elProjectSelect = document.getElementById("projectSelect");
@@ -431,7 +435,6 @@ function startApp(){
   const elTable = document.getElementById("table");
   const elRowCount = document.getElementById("rowCount");
 
-  // Views
   const elLandingView = document.getElementById("landingView");
   const elDashboardView = document.getElementById("dashboardView");
   const elBackBtn = document.getElementById("backBtn");
@@ -448,7 +451,9 @@ function startApp(){
   let runwayDate = null;
   let view = "landing"; // "landing" | "project"
 
-  // ---- UI helpers
+  const LANDING_TITLE = "Project Intel";
+  const LANDING_SUB = "Hosted on GitHub Pages • modular files";
+
   function setStatus(msg, kind){
     elStatus.textContent = msg;
     elStatus.style.color = "";
@@ -484,7 +489,6 @@ function startApp(){
     }
   }
 
-  // IMPORTANT CHANGE: do NOT auto-pick a project anymore (landing page is default)
   function initProjectDropdown(rows){
     const codes = uniq((rows||[])
       .map(r=>String(pick(r,FIELDS.projectCode)||"").trim())
@@ -519,7 +523,6 @@ function startApp(){
     elTable.innerHTML = thead + tbody;
   }
 
-  // ---- filters
   function rowMatchesTeamType(r){
     if(!activeTeamType) return true;
     return String(r.__teamType || "").toLowerCase() === activeTeamType.toLowerCase();
@@ -537,16 +540,29 @@ function startApp(){
     return uniq(teams).sort((a,b)=>a.localeCompare(b));
   }
 
-  function setView(next){
-    view = next;
-
-    if(elLandingView) elLandingView.style.display = (view === "landing") ? "block" : "none";
-    if(elDashboardView) elDashboardView.style.display = (view === "project") ? "block" : "none";
-    if(elBackBtn) elBackBtn.style.display = (view === "project") ? "inline-flex" : "none";
+  function fmtMonthYear(d){
+    const mm = String(d.getMonth()+1).padStart(2,"0");
+    const yy = d.getFullYear();
+    return `${mm}/${yy}`;
   }
 
+  // ---- modules
+  const landing = initLanding(document.getElementById("landingMount"), {
+    onSelectProject: (pc)=> goToProject(pc)
+  });
+
+  const gantt = initGantt(document.getElementById("ganttMount"), {
+    fmtWindow: (a,b)=> `${fmtMonthYear(a)} → ${fmtMonthYear(b)}`
+  });
+
+  const metrics = initMetrics(document.getElementById("metricsMount"), {
+    onRunwaySimulated: (sim)=>{
+      runwayDate = sim?.runwayDate || null;
+      gantt.setRunway(runwayDate);
+    }
+  });
+
   function clearHash(){
-    // remove hash without reloading
     try{
       const url = new URL(location.href);
       url.hash = "";
@@ -556,13 +572,80 @@ function startApp(){
     }
   }
 
+  function computeTeamLabel(rowsForProject){
+    const teams = uniq(rowsForProject.map(r => displayTeam(String(r.__team||"").trim()))).filter(Boolean);
+    const types = uniq(rowsForProject.map(r => String(r.__teamType||"").trim()).filter(Boolean));
+
+    const teamText = teams.length
+      ? (teams.length <= 2 ? teams.join(", ") : `${teams[0]}, ${teams[1]} +${teams.length-2}`)
+      : "—";
+
+    const typeText = types.length
+      ? (types.length <= 2 ? types.join(", ") : `${types[0]}, ${types[1]} +${types.length-2}`)
+      : "";
+
+    // “Team name” requested; we still keep discipline if we have it, but short
+    return typeText ? `${typeText} • ${teamText}` : teamText;
+  }
+
+  function computeBuiltUpArea(rowsForProject){
+    const vals = rowsForProject
+      .map(r => String(pick(r, FIELDS.builtUpArea) || "").trim())
+      .filter(Boolean);
+
+    if(!vals.length) return "";
+
+    // If ALL look numeric-ish, show max as formatted; else keep first (preserve units like "sqft")
+    const nums = vals.map(v => toNumber(v)).filter(n => Number.isFinite(n) && n > 0);
+    const allNumeric = nums.length === vals.length;
+
+    if(allNumeric){
+      const mx = Math.max(...nums);
+      return mx.toLocaleString();
+    }
+    return vals[0];
+  }
+
+  function updateHeader(){
+    if(view === "landing"){
+      elTitle.textContent = LANDING_TITLE;
+      elSub.textContent = LANDING_SUB;
+      if(elControlsPanel) elControlsPanel.style.display = "";
+      return;
+    }
+
+    // project view
+    const rowsForProject = allRows.filter(r => String(pick(r,FIELDS.projectCode)||"").trim() === activeProject);
+    const pn = projectNameMap.get(activeProject) || "";
+    const title = pn || activeProject || "Project";
+
+    const teamLabel = computeTeamLabel(rowsForProject);
+    const bua = computeBuiltUpArea(rowsForProject);
+
+    elTitle.textContent = title;
+    elSub.textContent = `Team: ${teamLabel} • Built-up area: ${bua || "—"}`;
+
+    // hide all filters/upload/project dropdown/search on dashboard
+    if(elControlsPanel) elControlsPanel.style.display = "none";
+  }
+
+  function setView(next){
+    view = next;
+
+    if(elLandingView) elLandingView.style.display = (view === "landing") ? "block" : "none";
+    if(elDashboardView) elDashboardView.style.display = (view === "project") ? "block" : "none";
+    if(elBackBtn) elBackBtn.style.display = (view === "project") ? "inline-flex" : "none";
+
+    updateHeader();
+  }
+
   function goToLanding(opts = {}){
     const updateHash = opts.updateHash !== false;
     activeProject = "";
     if(elProjectSelect) elProjectSelect.value = "";
     setView("landing");
     renderLanding();
-    renderAll(); // clears gantt/metrics/table content
+    renderAll();
     if(updateHash) clearHash();
   }
 
@@ -601,7 +684,6 @@ function startApp(){
 
     renderLanding();
 
-    // If current selected project disappears due to filters, go back to landing.
     if(activeProject){
       const stillExists = allRows.some(r => String(pick(r,FIELDS.projectCode)||"").trim() === activeProject);
       if(!stillExists){
@@ -610,12 +692,8 @@ function startApp(){
       }
     }
 
-    // Keep view as-is
     if(view === "project" && activeProject) renderAll();
-    else {
-      // landing: keep dashboard content cleared
-      renderAll();
-    }
+    else renderAll();
   }
 
   function setTeamType(v){
@@ -636,28 +714,6 @@ function startApp(){
     applyCsvFilters();
   }
 
-  function fmtMonthYear(d){
-    const mm = String(d.getMonth()+1).padStart(2,"0");
-    const yy = d.getFullYear();
-    return `${mm}/${yy}`;
-  }
-
-  // ---- modules
-  const landing = initLanding(document.getElementById("landingMount"), {
-    onSelectProject: (pc)=> goToProject(pc)
-  });
-
-  const gantt = initGantt(document.getElementById("ganttMount"), {
-    fmtWindow: (a,b)=> `${fmtMonthYear(a)} → ${fmtMonthYear(b)}`
-  });
-
-  const metrics = initMetrics(document.getElementById("metricsMount"), {
-    onRunwaySimulated: (sim)=>{
-      runwayDate = sim?.runwayDate || null;
-      gantt.setRunway(runwayDate);
-    }
-  });
-
   function pickCurrentStage(stages, today){
     const incomplete = (stages || []).filter(s => !s.done && (s.start || s.end || s.extEnd));
     if(!incomplete.length) return null;
@@ -672,7 +728,6 @@ function startApp(){
       .sort((a,b)=>(a.start?.getTime?.()||0) - (b.start?.getTime?.()||0));
     if(upcoming.length) return upcoming[0];
 
-    // fallback: first incomplete with any dates
     return incomplete[0];
   }
 
@@ -719,7 +774,7 @@ function startApp(){
 
       const projectPP = computeProjectPP(rowsForProject);
 
-      const item = {
+      projects.push({
         code: pc,
         name: pn,
         teamType,
@@ -735,12 +790,9 @@ function startApp(){
           discipline: missed.discipline,
           overdueDays: missed.overdueDays || 0
         } : null
-      };
-
-      projects.push(item);
+      });
     }
 
-    // sort: missed first, then by code
     projects.sort((a,b)=>{
       const am = a.missedStage ? 1 : 0;
       const bm = b.missedStage ? 1 : 0;
@@ -770,7 +822,7 @@ function startApp(){
 
   function renderAll(){
     const query = elSearch.value.trim().toLowerCase();
-    activeProject = elProjectSelect.value || "";
+    activeProject = elProjectSelect.value || activeProject || "";
 
     filteredRows = allRows.filter(row=>{
       if(activeProject){
@@ -788,7 +840,7 @@ function startApp(){
     const today = new Date();
 
     const projectName = activeProject ? (projectNameMap.get(activeProject) || "") : "";
-    const title = activeProject ? (projectName ? `${activeProject} — ${projectName}` : activeProject) : "Select a project";
+    const titleForModules = activeProject ? (projectName ? `${activeProject} — ${projectName}` : activeProject) : "Select a project";
 
     const stages = activeProject ? buildStagesFromProjectRowsWide(rowsForProject, today) : [];
     const projectPP = activeProject ? computeProjectPP(rowsForProject) : 0;
@@ -798,13 +850,16 @@ function startApp(){
     const runway = computeRunwayFromPeopleAndBH(people, hours.BH);
     runwayDate = runway.runwayDate || null;
 
-    gantt.setData({ title, projectPP, stages, runwayDate });
-    metrics.setData({ title, hours, people, runway });
+    gantt.setData({ title: titleForModules, projectPP, stages, runwayDate });
+    metrics.setData({ title: titleForModules, hours, people, runway });
 
     gantt.setRunway(runwayDate);
+
+    // keep header correct even if filters changed while on project view
+    updateHeader();
   }
 
-  // ---- parsing
+  // ---- parsing helpers
   function detectDelimiter(text){
     const sample = (text || "").replace(/^\uFEFF/, "");
     const line = sample.split(/\r?\n/).find(l => l.trim() !== "") || "";
@@ -897,7 +952,6 @@ function startApp(){
 
         applyCsvFilters();
 
-        // route after load (supports #p=...)
         handleHashRoute();
         if(!location.hash) goToLanding({ updateHash:false });
 
@@ -933,7 +987,6 @@ function startApp(){
 
         applyCsvFilters();
 
-        // route after load (supports #p=...)
         handleHashRoute();
         if(!location.hash) goToLanding({ updateHash:false });
 
@@ -954,25 +1007,22 @@ function startApp(){
     if(f) await importFile(f);
   });
 
-  // Project dropdown: selecting a project moves to dashboard
+  // (still exists on landing, but dashboard hides the whole panel)
   elProjectSelect.addEventListener("change", ()=>{
     const pc = elProjectSelect.value || "";
     if(pc) goToProject(pc);
     else goToLanding();
   });
 
-  // Search: landing filters tiles; dashboard filters rows (existing behavior)
   elSearch.addEventListener("input", ()=>{
     if(view === "landing") renderLanding();
     else renderAll();
   });
 
-  // Back button
   if(elBackBtn){
     elBackBtn.onclick = ()=> goToLanding();
   }
 
-  // Hash routing
   window.addEventListener("hashchange", ()=>{
     if(!csvRowsAll.length) return;
     handleHashRoute();
