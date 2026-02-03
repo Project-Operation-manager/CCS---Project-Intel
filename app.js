@@ -5,7 +5,6 @@ import { initLanding } from "./modules/landing.module.js";
 window.addEventListener("DOMContentLoaded", () => startApp());
 
 function startApp(){
-  const TEAM_TYPES_FIXED = ["Architecture","Interior","Landscape"];
   const TEAM_UNSPEC = "(Unspecified)";
   const TEAM_BLANK_SENTINEL = "__BLANK__";
 
@@ -30,7 +29,6 @@ function startApp(){
     projectName:   ["Project Name","Project","Name","ProjectName"],
     teamName:      ["Team","Team Name","TeamName","TEAM","Team/Name","Team_Name","Team - Name"],
 
-    // NEW: built-up area (we'll display this on dashboard header)
     builtUpArea:   ["Built up area","Built-up area","BuiltUpArea","BUA","Built Up Area","Builtup Area","Built Up","Area"],
 
     allottedHours: ["AH","Allotted hours","Allotted Hours","Allotted","Allocated hours","Allocated Hours"],
@@ -116,60 +114,6 @@ function startApp(){
   }
 
   function daysBetween(a,b){ return Math.round((b-a)/86400000); }
-
-  function isNumericLike(s){
-    const t = String(s||"").trim();
-    if(!t) return false;
-    return /^-?\d+(\.\d+)?$/.test(t);
-  }
-  function isTruthyFlag(raw){
-    const low = String(raw||"").trim().toLowerCase();
-    if(!low) return false;
-    if(["y","yes","true","t","1"].includes(low)) return true;
-    if(isNumericLike(low)) return Number(low) > 0;
-    return false;
-  }
-  function isFalsyFlag(raw){
-    const low = String(raw||"").trim().toLowerCase();
-    if(!low) return false;
-    if(["n","no","false","f","0","na","n/a","-"].includes(low)) return true;
-    if(isNumericLike(low)) return Number(low) <= 0;
-    return false;
-  }
-  function looksLikeName(raw){
-    return /[a-zA-Z]/.test(String(raw||""));
-  }
-
-  function discoverTeamTypeColumns(headers){
-    const normHeaders = headers.map(h => ({ raw:h, n:normalizeKey(h) }));
-    function firstMatch(predicate){
-      const hit = normHeaders.find(predicate);
-      return hit ? hit.raw : null;
-    }
-    const arch = firstMatch(h => h.n === "architecture" || h.n.includes("architecture") || h.n === "arch");
-    const interior = firstMatch(h => h.n === "interior" || h.n.includes("interior") || h.n.includes("interiors"));
-    const landscape = firstMatch(h => h.n === "landscape" || h.n.includes("landscape") || h.n.includes("landacpe") || h.n === "landacpe");
-    return { Architecture: arch, Interior: interior, Landscape: landscape };
-  }
-
-  function deriveTeamInfo(row, typeCols){
-    const fallbackTeam = String(pick(row, FIELDS.teamName) || "").trim();
-
-    for(const type of TEAM_TYPES_FIXED){
-      const col = typeCols?.[type];
-      if(!col) continue;
-
-      const raw = String(row[col] ?? "").trim();
-      if(!raw) continue;
-      if(isFalsyFlag(raw)) continue;
-
-      if(isTruthyFlag(raw) || !looksLikeName(raw)){
-        return { teamType:type, team: fallbackTeam || "" };
-      }
-      return { teamType:type, team: raw };
-    }
-    return { teamType:"", team:"" };
-  }
 
   function displayTeam(t){ return t ? t : TEAM_UNSPEC; }
   function normalizeTeamSelectionValue(v){ return (v === TEAM_UNSPEC) ? TEAM_BLANK_SENTINEL : v; }
@@ -425,12 +369,12 @@ function startApp(){
   const elTitle = document.getElementById("appTitle");
   const elSub = document.getElementById("appSub");
   const elControlsPanel = document.getElementById("controlsPanel");
+  const elLandingRight = document.getElementById("landingRight");
 
   const elFile = document.getElementById("file");
   const elStatus = document.getElementById("status");
   const elProjectSelect = document.getElementById("projectSelect");
   const elSearch = document.getElementById("search");
-  const elTeamTypeRadios = document.getElementById("teamTypeRadios");
   const elTeamRadios = document.getElementById("teamRadios");
   const elTable = document.getElementById("table");
   const elRowCount = document.getElementById("rowCount");
@@ -444,15 +388,12 @@ function startApp(){
   let allRows = [];
   let filteredRows = [];
   let projectNameMap = new Map();
-  let typeCols = { Architecture:null, Interior:null, Landscape:null };
-  let activeTeamType = "";
   let activeTeam = "";
   let activeProject = "";
   let runwayDate = null;
   let view = "landing"; // "landing" | "project"
 
   const LANDING_TITLE = "Project Intel";
-  const LANDING_SUB = "Hosted on GitHub Pages • modular files";
 
   function setStatus(msg, kind){
     elStatus.textContent = msg;
@@ -474,6 +415,7 @@ function startApp(){
       el.appendChild(b);
     }
   }
+
   function setActiveRadio(el, activeValue){
     for(const b of el.querySelectorAll(".radioBtn")){
       b.classList.toggle("active", b.dataset.value === activeValue);
@@ -523,27 +465,16 @@ function startApp(){
     elTable.innerHTML = thead + tbody;
   }
 
-  function rowMatchesTeamType(r){
-    if(!activeTeamType) return true;
-    return String(r.__teamType || "").toLowerCase() === activeTeamType.toLowerCase();
-  }
   function rowMatchesTeam(r){
     if(!activeTeam) return true;
     return matchTeam(r.__team || "", activeTeam);
   }
 
-  function getTeamsForSelectedType(){
-    const teams = csvRowsAll
-      .filter(r => rowMatchesTeamType(r))
+  function getAllTeams(rows){
+    const teams = (rows||[])
       .map(r => displayTeam(String(r.__team || "").trim()))
       .filter(Boolean);
     return uniq(teams).sort((a,b)=>a.localeCompare(b));
-  }
-
-  function fmtMonthYear(d){
-    const mm = String(d.getMonth()+1).padStart(2,"0");
-    const yy = d.getFullYear();
-    return `${mm}/${yy}`;
   }
 
   // ---- modules
@@ -552,7 +483,10 @@ function startApp(){
   });
 
   const gantt = initGantt(document.getElementById("ganttMount"), {
-    fmtWindow: (a,b)=> `${fmtMonthYear(a)} → ${fmtMonthYear(b)}`
+    fmtWindow: (a,b)=>{
+      const mm = d => String(d.getMonth()+1).padStart(2,"0");
+      return `${mm(a)}/${a.getFullYear()} → ${mm(b)}/${b.getFullYear()}`;
+    }
   });
 
   const metrics = initMetrics(document.getElementById("metricsMount"), {
@@ -574,31 +508,17 @@ function startApp(){
 
   function computeTeamLabel(rowsForProject){
     const teams = uniq(rowsForProject.map(r => displayTeam(String(r.__team||"").trim()))).filter(Boolean);
-    const types = uniq(rowsForProject.map(r => String(r.__teamType||"").trim()).filter(Boolean));
-
-    const teamText = teams.length
-      ? (teams.length <= 2 ? teams.join(", ") : `${teams[0]}, ${teams[1]} +${teams.length-2}`)
-      : "—";
-
-    const typeText = types.length
-      ? (types.length <= 2 ? types.join(", ") : `${types[0]}, ${types[1]} +${types.length-2}`)
-      : "";
-
-    // “Team name” requested; we still keep discipline if we have it, but short
-    return typeText ? `${typeText} • ${teamText}` : teamText;
+    if(!teams.length) return "—";
+    return teams.length <= 2 ? teams.join(", ") : `${teams[0]}, ${teams[1]} +${teams.length-2}`;
   }
 
   function computeBuiltUpArea(rowsForProject){
     const vals = rowsForProject
       .map(r => String(pick(r, FIELDS.builtUpArea) || "").trim())
       .filter(Boolean);
-
     if(!vals.length) return "";
-
-    // If ALL look numeric-ish, show max as formatted; else keep first (preserve units like "sqft")
     const nums = vals.map(v => toNumber(v)).filter(n => Number.isFinite(n) && n > 0);
     const allNumeric = nums.length === vals.length;
-
     if(allNumeric){
       const mx = Math.max(...nums);
       return mx.toLocaleString();
@@ -609,8 +529,15 @@ function startApp(){
   function updateHeader(){
     if(view === "landing"){
       elTitle.textContent = LANDING_TITLE;
-      elSub.textContent = LANDING_SUB;
+
+      // No hosting text on landing
+      if(elSub){
+        elSub.style.display = "none";
+        elSub.textContent = "";
+      }
+
       if(elControlsPanel) elControlsPanel.style.display = "";
+      if(elLandingRight) elLandingRight.style.display = "";
       return;
     }
 
@@ -623,10 +550,15 @@ function startApp(){
     const bua = computeBuiltUpArea(rowsForProject);
 
     elTitle.textContent = title;
-    elSub.textContent = `Team: ${teamLabel} • Built-up area: ${bua || "—"}`;
 
-    // hide all filters/upload/project dropdown/search on dashboard
+    if(elSub){
+      elSub.style.display = "";
+      elSub.textContent = `Team: ${teamLabel} • Built-up area: ${bua || "—"}`;
+    }
+
+    // hide landing controls + upload on dashboard
     if(elControlsPanel) elControlsPanel.style.display = "none";
+    if(elLandingRight) elLandingRight.style.display = "none";
   }
 
   function setView(next){
@@ -678,7 +610,7 @@ function startApp(){
   }
 
   function applyCsvFilters(){
-    allRows = csvRowsAll.filter(r => rowMatchesTeamType(r) && rowMatchesTeam(r));
+    allRows = csvRowsAll.filter(r => rowMatchesTeam(r));
     buildProjectNameMap(allRows);
     initProjectDropdown(allRows);
 
@@ -692,22 +624,9 @@ function startApp(){
       }
     }
 
-    if(view === "project" && activeProject) renderAll();
-    else renderAll();
+    renderAll();
   }
 
-  function setTeamType(v){
-    activeTeamType = v || "";
-    setActiveRadio(elTeamTypeRadios, activeTeamType);
-
-    activeTeam = "";
-    setActiveRadio(elTeamRadios, "");
-
-    const teams = getTeamsForSelectedType();
-    renderRadioRow(elTeamRadios, teams, "", (vv)=> setTeam(vv));
-
-    applyCsvFilters();
-  }
   function setTeam(v){
     activeTeam = normalizeTeamSelectionValue(v || "");
     setActiveRadio(elTeamRadios, v || "");
@@ -765,9 +684,6 @@ function startApp(){
       const teams = uniq(rowsForProject.map(r => displayTeam(String(r.__team||"").trim()))).filter(Boolean);
       const team = teams.length ? (teams.length <= 2 ? teams.join(", ") : `${teams[0]}, ${teams[1]} +${teams.length-2}`) : TEAM_UNSPEC;
 
-      const types = uniq(rowsForProject.map(r => String(r.__teamType||"").trim()).filter(Boolean));
-      const teamType = types.length ? (types.length <= 2 ? types.join(", ") : `${types[0]}, ${types[1]} +${types.length-2}`) : TEAM_UNSPEC;
-
       const stages = buildStagesFromProjectRowsWide(rowsForProject, today);
       const current = pickCurrentStage(stages, today);
       const missed = pickMostOverdueStage(stages, today);
@@ -777,7 +693,7 @@ function startApp(){
       projects.push({
         code: pc,
         name: pn,
-        teamType,
+        teamType: "",   // keep field for landing.module compatibility
         team,
         projectPP,
         currentStage: current ? {
@@ -804,7 +720,7 @@ function startApp(){
     if(query){
       shown = projects.filter(p=>{
         const hay = [
-          p.code, p.name, p.teamType, p.team,
+          p.code, p.name, p.team,
           p.currentStage?.label, p.currentStage?.alertText,
           p.missedStage?.label
         ].filter(Boolean).join(" ").toLowerCase();
@@ -815,7 +731,7 @@ function startApp(){
     landing.setData({
       projects: shown,
       subtitle: csvRowsAll.length
-        ? `Showing ${shown.length} of ${projects.length} projects (filters applied).`
+        ? `Showing ${shown.length} of ${projects.length} projects (team filter applied).`
         : "Upload a file to see project tiles."
     });
   }
@@ -855,11 +771,10 @@ function startApp(){
 
     gantt.setRunway(runwayDate);
 
-    // keep header correct even if filters changed while on project view
     updateHeader();
   }
 
-  // ---- parsing helpers
+  // ---- parsing
   function detectDelimiter(text){
     const sample = (text || "").replace(/^\uFEFF/, "");
     const line = sample.split(/\r?\n/).find(l => l.trim() !== "") || "";
@@ -915,7 +830,7 @@ function startApp(){
     setStatus("Loading…");
 
     csvRowsAll=[]; allRows=[]; filteredRows=[];
-    activeTeamType=""; activeTeam=""; activeProject="";
+    activeTeam=""; activeProject="";
     runwayDate = null;
 
     elProjectSelect.innerHTML = `<option value="">Select a project…</option>`;
@@ -923,37 +838,35 @@ function startApp(){
     elSearch.value = "";
     elSearch.disabled = true;
 
-    elTeamTypeRadios.innerHTML = "";
     elTeamRadios.innerHTML = "";
     elTable.innerHTML = "";
     elRowCount.textContent = "0 rows";
 
     try{
+      const buildRows = (headers, objects) => {
+        const keyMap = buildHeaderIndex(headers);
+
+        csvRowsAll = objects.map(o=>{
+          const row = { ...o, __keyMap:keyMap };
+          row.__team = String(pick(row, FIELDS.teamName) || "").trim();
+          return row;
+        });
+
+        const teamsAll = getAllTeams(csvRowsAll);
+        renderRadioRow(elTeamRadios, teamsAll, "", (v)=> setTeam(v));
+
+        applyCsvFilters();
+        handleHashRoute();
+        if(!location.hash) goToLanding({ updateHash:false });
+      };
+
       if(name.endsWith(".csv") || name.endsWith(".tsv") || name.endsWith(".txt")){
         const text = await file.text();
         const delim = detectDelimiter(text);
         const matrix = parseDelimited(text, delim);
         const { headers, objects } = matrixToObjects(matrix);
-        const keyMap = buildHeaderIndex(headers);
 
-        typeCols = discoverTeamTypeColumns(headers);
-
-        csvRowsAll = objects.map(o=>{
-          const row = { ...o, __keyMap:keyMap };
-          const info = deriveTeamInfo(row, typeCols);
-          row.__teamType = info.teamType || "";
-          row.__team = info.team || "";
-          return row;
-        });
-
-        renderRadioRow(elTeamTypeRadios, TEAM_TYPES_FIXED, "", setTeamType);
-        const teamsAll = uniq(csvRowsAll.map(r=>displayTeam(String(r.__team||"").trim()))).sort((a,b)=>a.localeCompare(b));
-        renderRadioRow(elTeamRadios, teamsAll, "", (v)=> setTeam(v));
-
-        applyCsvFilters();
-
-        handleHashRoute();
-        if(!location.hash) goToLanding({ updateHash:false });
+        buildRows(headers, objects);
 
         setStatus(`Loaded (${delim === "\t" ? "TAB" : delim} • ${csvRowsAll.length} rows)`, "ok");
         return;
@@ -969,26 +882,8 @@ function startApp(){
         const ws = workbook.Sheets[firstSheet];
         const matrix = XLSX.utils.sheet_to_json(ws,{ header:1, defval:"", raw:false });
         const { headers, objects } = matrixToObjects(matrix);
-        const keyMap = buildHeaderIndex(headers);
 
-        typeCols = discoverTeamTypeColumns(headers);
-
-        csvRowsAll = objects.map(o=>{
-          const row = { ...o, __keyMap:keyMap };
-          const info = deriveTeamInfo(row, typeCols);
-          row.__teamType = info.teamType || "";
-          row.__team = info.team || "";
-          return row;
-        });
-
-        renderRadioRow(elTeamTypeRadios, TEAM_TYPES_FIXED, "", setTeamType);
-        const teamsAll = uniq(csvRowsAll.map(r=>displayTeam(String(r.__team||"").trim()))).sort((a,b)=>a.localeCompare(b));
-        renderRadioRow(elTeamRadios, teamsAll, "", (v)=> setTeam(v));
-
-        applyCsvFilters();
-
-        handleHashRoute();
-        if(!location.hash) goToLanding({ updateHash:false });
+        buildRows(headers, objects);
 
         setStatus(`Imported "${file.name}" (sheet: ${firstSheet})`, "ok");
         return;
@@ -1007,7 +902,6 @@ function startApp(){
     if(f) await importFile(f);
   });
 
-  // (still exists on landing, but dashboard hides the whole panel)
   elProjectSelect.addEventListener("change", ()=>{
     const pc = elProjectSelect.value || "";
     if(pc) goToProject(pc);
