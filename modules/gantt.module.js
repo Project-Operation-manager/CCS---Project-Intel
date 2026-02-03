@@ -1,7 +1,7 @@
 export function initGantt(mountEl, opts = {}){
   const WINDOW_WEEKS = 52;
   const WINDOW_DAYS = WINDOW_WEEKS * 7;
-  const SLIDER_STEP_DAYS = 28; // 4 weeks
+  const PAN_STEP_DAYS = 1; // days per pan increment
 
   const fmtWindow = opts.fmtWindow || ((a,b)=>`${a.toISOString().slice(0,10)} → ${b.toISOString().slice(0,10)}`);
 
@@ -34,7 +34,11 @@ export function initGantt(mountEl, opts = {}){
         display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end;
         flex:1 1 auto;
       }
-      input[type="range"]{ width:min(420px, 100%); accent-color:#9fb0d0; }
+
+      /* Click-drag pan affordance */
+      .ganttOuter{ cursor: grab; }
+      .ganttOuter.dragging{ cursor: grabbing; }
+      .ganttOuter.dragging *{ user-select:none; }
 
       .legend{
         display:flex; align-items:center; gap:10px;
@@ -219,7 +223,6 @@ export function initGantt(mountEl, opts = {}){
       </div>
 
       <div class="ganttControlsRow">
-        <input id="gSlider" type="range" min="0" max="0" value="0" step="${SLIDER_STEP_DAYS}" disabled />
         <span id="gWindow" class="pill">—</span>
 
         <div class="legend" title="Stage colors by discipline">
@@ -240,17 +243,100 @@ export function initGantt(mountEl, opts = {}){
   `;
 
   const elTitle = mountEl.querySelector("#gTitle");
-  const elSlider = mountEl.querySelector("#gSlider");
   const elWindow = mountEl.querySelector("#gWindow");
   const elGrid = mountEl.querySelector("#gGrid");
   const elMsg = mountEl.querySelector("#gMsg");
 
-  elSlider.oninput = ()=>{
-    ganttOffset = Number(elSlider.value || 0);
-    ganttOffset = Math.round(ganttOffset / SLIDER_STEP_DAYS) * SLIDER_STEP_DAYS;
-    elSlider.value = String(ganttOffset);
-    render();
-  };
+  // Drag-to-pan state
+  let isDragging = false;
+  let dragStartX = 0;
+  let dragStartOffset = 0;
+  let dragPaneWidthPx = 0;
+  let rafId = 0;
+
+  function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
+
+  function getRightPaneWidth(){
+    // Prefer header right pane, fallback to any right cell.
+    const headR = mountEl.querySelector(".gHeadR");
+    if(headR){
+      const w = headR.getBoundingClientRect().width;
+      if(Number.isFinite(w) && w > 50) return w;
+    }
+    const cellR = mountEl.querySelector(".gCellR");
+    if(cellR){
+      const w = cellR.getBoundingClientRect().width;
+      if(Number.isFinite(w) && w > 50) return w;
+    }
+    return 0;
+  }
+
+  function scheduleRender(){
+    if(rafId) return;
+    rafId = requestAnimationFrame(()=>{
+      rafId = 0;
+      render();
+    });
+  }
+
+  function pointerDown(e){
+    // Only left-click drag
+    if(e.button !== 0) return;
+    if(!state.stages || !state.stages.length) return;
+    if(ganttMaxStart <= 0) return;
+
+    // Only start pan if the pointer is on the timeline side (right pane)
+    const onRight = e.target && (e.target.closest?.(".gHeadR") || e.target.closest?.(".gCellR"));
+    if(!onRight) return;
+
+    dragPaneWidthPx = getRightPaneWidth();
+    if(!(dragPaneWidthPx > 0)) return;
+
+    isDragging = true;
+    dragStartX = e.clientX;
+    dragStartOffset = ganttOffset;
+
+    const outer = mountEl.querySelector(".ganttOuter");
+    if(outer) outer.classList.add("dragging");
+
+    try{ e.target.setPointerCapture?.(e.pointerId); } catch(_){ /* ignore */ }
+    e.preventDefault();
+  }
+
+  function pointerMove(e){
+    if(!isDragging) return;
+    const dx = e.clientX - dragStartX;
+
+    // Map pixels to days across the fixed window.
+    // Drag left (dx negative) => move window forward (offset increases)
+    const daysFloat = (-dx / dragPaneWidthPx) * WINDOW_DAYS;
+    const daysDelta = Math.round(daysFloat / PAN_STEP_DAYS) * PAN_STEP_DAYS;
+    const next = clamp(dragStartOffset + daysDelta, 0, ganttMaxStart);
+
+    if(next !== ganttOffset){
+      ganttOffset = next;
+      scheduleRender();
+    }
+    e.preventDefault();
+  }
+
+  function pointerUp(e){
+    if(!isDragging) return;
+    isDragging = false;
+    const outer = mountEl.querySelector(".ganttOuter");
+    if(outer) outer.classList.remove("dragging");
+    e.preventDefault();
+  }
+
+  // Attach pan handlers to the outer wrapper (pointer events bubble)
+  const outerForPan = mountEl.querySelector(".ganttOuter");
+  if(outerForPan){
+    outerForPan.addEventListener("pointerdown", pointerDown, { passive:false });
+    outerForPan.addEventListener("pointermove", pointerMove, { passive:false });
+    outerForPan.addEventListener("pointerup", pointerUp, { passive:false });
+    outerForPan.addEventListener("pointercancel", pointerUp, { passive:false });
+    outerForPan.addEventListener("pointerleave", pointerUp, { passive:false });
+  }
 
   function monthShort(d){ return d.toLocaleString(undefined, { month:"short" }); }
 
@@ -378,8 +464,6 @@ export function initGantt(mountEl, opts = {}){
     if(!state.stages || !state.stages.length){
       elMsg.textContent = "Upload a file, pick a project, and your timeline will appear here.";
       ganttMinDate = null;
-      elSlider.disabled = true;
-      elSlider.min = "0"; elSlider.max = "0"; elSlider.value = "0";
       setWindowLabel(null);
       return;
     }
@@ -388,17 +472,11 @@ export function initGantt(mountEl, opts = {}){
     ganttMinDate = min;
 
     const totalSpan = Math.max(0, daysBetween(min, max));
-    let maxStart = Math.max(0, totalSpan - WINDOW_DAYS);
-    maxStart = Math.floor(maxStart / SLIDER_STEP_DAYS) * SLIDER_STEP_DAYS;
-    ganttMaxStart = maxStart;
+    ganttMaxStart = Math.max(0, totalSpan - WINDOW_DAYS);
+    ganttMaxStart = Math.floor(ganttMaxStart / PAN_STEP_DAYS) * PAN_STEP_DAYS;
 
-    elSlider.min = "0";
-    elSlider.max = String(ganttMaxStart);
-    elSlider.step = String(SLIDER_STEP_DAYS);
-
+    if(ganttMaxStart <= 0) ganttOffset = 0;
     if(ganttOffset > ganttMaxStart) ganttOffset = ganttMaxStart;
-    elSlider.value = String(ganttOffset);
-    elSlider.disabled = ganttMaxStart <= 0;
 
     const windowStart = new Date(ganttMinDate.getTime() + ganttOffset*86400000);
     const windowEnd = new Date(windowStart.getTime() + WINDOW_DAYS*86400000);
