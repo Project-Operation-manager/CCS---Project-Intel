@@ -1,281 +1,1035 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Project Intel</title>
+import { initGantt } from "./modules/gantt.module.js";
+import { initMetrics } from "./modules/metrics.module.js";
+import { initLanding } from "./modules/landing.module.js";
 
-  <link rel="icon" href="data:," />
+window.addEventListener("DOMContentLoaded", () => startApp());
 
-  <script>
-    (function () {
-      try {
-        const url = new URL(location.href);
-        const p = url.pathname || "";
-        const endsWithHtml = p.endsWith(".html") || p.endsWith(".htm");
-        if (!endsWithHtml && !p.endsWith("/")) {
-          url.pathname = p + "/";
-          location.replace(url.toString());
+function startApp(){
+  const TEAM_TYPES_FIXED = ["Architecture","Interior","Landscape"];
+  const TEAM_UNSPEC = "(Unspecified)";
+  const TEAM_BLANK_SENTINEL = "__BLANK__";
+
+  const STAGES = [
+    "CD1","CD2","CD3","CD4","CD5",
+    "SD1","SD2","SD3","SD4",
+    "MC","AD",
+    "DD1","DD2","DD3","DD4",
+    "TD1","TD2","TD3","TD4","TD5",
+    "WD20","WD40","WD60","WD80","WD100",
+    "DC","CO"
+  ];
+
+  const DISCIPLINE = {
+    Architecture: new Set(["CD1","CD2","CD5","SD1","SD2","AD","DD1","DD2","TD1","TD2","TD3","WD20","WD40","WD60"]),
+    Interior:     new Set(["CD3","SD3","DD3","TD4","WD100"]),
+    Landscape:    new Set(["CD4","SD4","DD4","TD5","WD80"])
+  };
+
+  const FIELDS = {
+    projectCode:   ["PC","Project Code","ProjectCode","Code"],
+    projectName:   ["Project Name","Project","Name","ProjectName"],
+
+    // Team might be here OR in the discipline columns (Architecture/Interior/Landscape)
+    teamName:      ["Team","Team Name","TeamName","TEAM","Team/Name","Team_Name","Team - Name"],
+
+    builtUpArea:   ["Built up area","Built-up area","BuiltUpArea","BUA","Built Up Area","Builtup Area","Built Up","Area"],
+
+    allottedHours: ["AH","Allotted hours","Allotted Hours","Allotted","Allocated hours","Allocated Hours"],
+    consumedHours: ["TCH","Total consumed hours","Total Consumed Hours","Consumed hours","Consumed Hours","Consumed"],
+    balanceHours:  ["BH","Balanced hours","Balance hours","Balance Hours","Balance"],
+
+    deployment:    ["DYT","Deployment","Deployement","Deployement "],
+    progress:      ["PP","Project progress","Project progess","Progress"],
+  };
+
+  // ---------------- helpers ----------------
+  function normalizeKey(k){
+    return String(k||"").replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s_-]+/g,"");
+  }
+  function buildHeaderIndex(headers){
+    const idx={}; for(const h of headers) idx[normalizeKey(h)] = h; return idx;
+  }
+  function pick(row, candidates){
+    const map=row.__keyMap||{};
+    for(const c of candidates){
+      const nk=normalizeKey(c);
+      if(map[nk] !== undefined) return row[map[nk]];
+    }
+    return "";
+  }
+  function getAllValues(row, candidates){
+    const map=row.__keyMap||{};
+    const out=[];
+    for(const c of candidates){
+      const nk=normalizeKey(c);
+      if(map[nk] !== undefined) out.push(row[map[nk]]);
+    }
+    return out;
+  }
+  function uniq(arr){ return Array.from(new Set(arr)); }
+  function clamp(n,a,b){ return Math.max(a, Math.min(b,n)); }
+
+  function toNumber(v){
+    if(v==null) return 0;
+    if(typeof v === "number" && Number.isFinite(v)) return v;
+    const s=String(v).trim(); if(!s) return 0;
+    const cleaned=s.replace(/,/g,"").replace(/[^0-9.\-]/g,"");
+    const n=Number(cleaned);
+    return Number.isFinite(n)?n:0;
+  }
+  function toPercent(v){
+    if(v==null) return 0;
+    if(typeof v === "number" && Number.isFinite(v)){
+      if(v > 0 && v <= 1) return v * 100;
+      return v;
+    }
+    const s = String(v).trim();
+    if(!s) return 0;
+    const hasPct = s.includes("%");
+    const n = toNumber(s);
+    if(!Number.isFinite(n)) return 0;
+    if(hasPct) return n;
+    if(n > 0 && n <= 1) return n * 100;
+    return n;
+  }
+
+  function parseDate(v){
+    if(v==null) return null;
+    if(v instanceof Date && !isNaN(v)) return v;
+
+    if(typeof v === "number" && Number.isFinite(v)){
+      const epoch = new Date(Date.UTC(1899, 11, 30));
+      const d = new Date(epoch.getTime() + v * 86400000);
+      return isNaN(d)?null:d;
+    }
+
+    const s=String(v).trim();
+    if(!s) return null;
+
+    const m2=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+    if(m2){
+      let dd=+m2[1], mm=+m2[2]-1, yy=+m2[3]; if(yy<100) yy+=2000;
+      const d=new Date(yy,mm,dd);
+      return isNaN(d)?null:d;
+    }
+
+    const d=new Date(s);
+    return isNaN(d)?null:d;
+  }
+
+  function daysBetween(a,b){ return Math.round((b-a)/86400000); }
+
+  function isNumericLike(s){
+    const t = String(s||"").trim();
+    if(!t) return false;
+    return /^-?\d+(\.\d+)?$/.test(t);
+  }
+  function isTruthyFlag(raw){
+    const low = String(raw||"").trim().toLowerCase();
+    if(!low) return false;
+    if(["y","yes","true","t","1"].includes(low)) return true;
+    if(isNumericLike(low)) return Number(low) > 0;
+    return false;
+  }
+  function isFalsyFlag(raw){
+    const low = String(raw||"").trim().toLowerCase();
+    if(!low) return false;
+    if(["n","no","false","f","0","na","n/a","-"].includes(low)) return true;
+    if(isNumericLike(low)) return Number(low) <= 0;
+    return false;
+  }
+  function looksLikeName(raw){
+    return /[a-zA-Z]/.test(String(raw||""));
+  }
+
+  // Split multi-team cells into individual team names
+  function splitTeams(raw){
+    const s = String(raw||"").trim();
+    if(!s) return [];
+    // split on comma, semicolon, slash, pipe, and " & "
+    return s
+      .replace(/\s*&\s*/g, ",")
+      .split(/[,;\/|]+/g)
+      .map(x=>x.trim())
+      .filter(Boolean);
+  }
+
+  function displayTeam(t){ return t ? t : TEAM_UNSPEC; }
+  function normalizeTeamSelectionValue(v){ return (v === TEAM_UNSPEC) ? TEAM_BLANK_SENTINEL : v; }
+
+  function discoverTeamTypeColumns(headers){
+    const normHeaders = headers.map(h => ({ raw:h, n:normalizeKey(h) }));
+    function firstMatch(predicate){
+      const hit = normHeaders.find(predicate);
+      return hit ? hit.raw : null;
+    }
+    const arch = firstMatch(h => h.n === "architecture" || h.n.includes("architecture") || h.n === "arch");
+    const interior = firstMatch(h => h.n === "interior" || h.n.includes("interior") || h.n.includes("interiors"));
+    const landscape = firstMatch(h => h.n === "landscape" || h.n.includes("landscape") || h.n.includes("landacpe") || h.n === "landacpe");
+    return { Architecture: arch, Interior: interior, Landscape: landscape };
+  }
+
+  // This restores the “old” robust behavior:
+  // - If Architecture/Interior/Landscape columns contain a team name, use it.
+  // - If they contain flags (Y/1/True), fallback to Team column.
+  function deriveTeamInfo(row, typeCols){
+    const fallbackTeam = String(pick(row, FIELDS.teamName) || "").trim();
+
+    for(const type of TEAM_TYPES_FIXED){
+      const col = typeCols?.[type];
+      if(!col) continue;
+
+      const raw = String(row[col] ?? "").trim();
+      if(!raw) continue;
+      if(isFalsyFlag(raw)) continue;
+
+      if(isTruthyFlag(raw) || !looksLikeName(raw)){
+        return { teamType:type, team: fallbackTeam || "" };
+      }
+      return { teamType:type, team: raw };
+    }
+    return { teamType:"", team: fallbackTeam || "" };
+  }
+
+  function matchTeam(rowTeams, activeTeam){
+    const list = Array.isArray(rowTeams) ? rowTeams : [];
+    if(activeTeam === TEAM_BLANK_SENTINEL){
+      // “Unspecified” means rows with no teams
+      return list.length === 0 || list.every(t => !String(t||"").trim());
+    }
+    const target = String(activeTeam||"").trim().toLowerCase();
+    return list.some(t => String(t||"").trim().toLowerCase() === target);
+  }
+
+  function parseDeploymentCell(v){
+    const s=String(v||"").trim(); if(!s) return [];
+    return s.split(",")
+      .map(p=>p.trim())
+      .filter(Boolean)
+      .map(part=>{
+        const m=part.match(/^(.*?)\s*\(\s*([0-9]+(?:\.[0-9]+)?)\s*%?\s*\)\s*$/);
+        if(m) return { name:(m[1].trim()||"(Blank)"), pct:Number(m[2]) };
+        return { name:part, pct:0 };
+      });
+  }
+
+  function disciplineForStage(stage){
+    if(DISCIPLINE.Architecture.has(stage)) return "Architecture";
+    if(DISCIPLINE.Interior.has(stage)) return "Interior";
+    if(DISCIPLINE.Landscape.has(stage)) return "Landscape";
+    return "Architecture";
+  }
+
+  function stageSchema(stageCode){
+    return {
+      start: [
+        `${stageCode} Start date`, `${stageCode} Start Date`,
+        `${stageCode} Start`, `${stageCode} Begin`, `${stageCode} StartDate`
+      ],
+      plannedEnd: [
+        `${stageCode} Planned End date`, `${stageCode} Planned End Date`, `${stageCode} Planned End`,
+        `${stageCode} End date`, `${stageCode} End Date`, `${stageCode} End`, `${stageCode} Finish`, `${stageCode} EndDate`
+      ],
+      extEnd: [
+        `${stageCode} Ext end date`, `${stageCode} Ext End Date`, `${stageCode} Ext End date`
+      ],
+      status: [
+        `${stageCode} Stage Status`, `${stageCode} Status`,
+        `${stageCode} Ext Stage Status`, `${stageCode} External Stage Status`,
+        `${stageCode} Completion`
+      ],
+      delDone: [
+        `${stageCode} Deliverables Done`, `${stageCode} Done Deliverables`, `${stageCode} Sent Deliverables`,
+        `${stageCode} Deliverables Sent`
+      ],
+      delRemain: [
+        `${stageCode} Deliverables Remaining`, `${stageCode} Remaining Deliverables`, `${stageCode} Pending Deliverables`
+      ],
+      delRatio: [
+        `${stageCode} Deliverables`, `${stageCode} Deliverable`
+      ],
+      stagePP: [
+        `${stageCode} PP`, `${stageCode} Progress`, `${stageCode} Stage Progress`, `${stageCode} Stage PP`
+      ]
+    };
+  }
+
+  function isStageComplete(statusText){
+    const s = String(statusText || "").trim().toLowerCase();
+    return s.includes("complete") || s === "done" || s === "completed";
+  }
+
+  function collectStageStatusValues(row, stageCode){
+    const sc = normalizeKey(stageCode);
+    const vals = [];
+
+    const explicit = pick(row, stageSchema(stageCode).status);
+    if(String(explicit||"").trim()) vals.push(String(explicit).trim());
+
+    for(const k of Object.keys(row)){
+      if(k === "__keyMap") continue;
+      const nk = normalizeKey(k);
+      if(!nk.includes(sc)) continue;
+      if(!(nk.includes("status") || nk.includes("completion") || nk.includes("complete"))) continue;
+      const v = String(row[k] ?? "").trim();
+      if(v) vals.push(v);
+    }
+    return uniq(vals);
+  }
+
+  function buildStagesFromProjectRowsWide(rowsForProject, today){
+    const stageMap = new Map(STAGES.map(s => [s, {
+      start:null, end:null, extEnd:null, done:false, statusText:"",
+      delDone:null, delRemain:null,
+      stagePP:null
+    }]));
+
+    for(const row of rowsForProject){
+      for(const st of STAGES){
+        const sch = stageSchema(st);
+
+        const startDates = getAllValues(row, sch.start).map(parseDate).filter(Boolean);
+        const plannedEnds = getAllValues(row, sch.plannedEnd).map(parseDate).filter(Boolean);
+        const extEnds = getAllValues(row, sch.extEnd).map(parseDate).filter(Boolean);
+
+        let s = startDates.length ? new Date(Math.min(...startDates.map(d=>d.getTime()))) : null;
+        let e = plannedEnds.length ? new Date(Math.max(...plannedEnds.map(d=>d.getTime()))) : null;
+        let x = extEnds.length ? new Date(Math.max(...extEnds.map(d=>d.getTime()))) : null;
+
+        const statusVals = collectStageStatusValues(row, st);
+        const cur = stageMap.get(st);
+
+        if(statusVals.length){
+          cur.statusText = statusVals.join(" | ");
+          if(statusVals.some(isStageComplete)) cur.done = true;
         }
-      } catch (e) { /* ignore */ }
-    })();
-  </script>
 
-  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js"></script>
+        const doneVals = getAllValues(row, sch.delDone).map(toNumber).filter(n=>Number.isFinite(n));
+        const remVals  = getAllValues(row, sch.delRemain).map(toNumber).filter(n=>Number.isFinite(n));
+        const ratioVals = getAllValues(row, sch.delRatio).map(v=>String(v||"").trim()).filter(Boolean);
 
-  <style>
-    :root{
-      --bg:#0b1220; --card:#121b2f; --text:#e8eefc; --muted:#9fb0d0; --grid:#22304f;
+        if(doneVals.length){
+          const mx = Math.max(...doneVals);
+          if(cur.delDone == null || mx > cur.delDone) cur.delDone = mx;
+        }
+        if(remVals.length){
+          const mx = Math.max(...remVals);
+          if(cur.delRemain == null || mx > cur.delRemain) cur.delRemain = mx;
+        }
+        if((cur.delDone == null || cur.delRemain == null) && ratioVals.length){
+          for(const rv of ratioVals){
+            const m = rv.match(/^\s*(\d+)\s*\/\s*(\d+)\s*$/);
+            if(m){
+              const a = Number(m[1]), b = Number(m[2]);
+              if(cur.delDone == null) cur.delDone = a;
+              if(cur.delRemain == null) cur.delRemain = b;
+              break;
+            }
+          }
+        }
 
-      --chip:#0f172a;
-      --chipBorder: rgba(255,255,255,0.10);
+        const ppVals = getAllValues(row, sch.stagePP).map(toPercent).filter(n=>Number.isFinite(n));
+        if(ppVals.length){
+          const mx = Math.max(...ppVals);
+          if(cur.stagePP == null || mx > cur.stagePP) cur.stagePP = mx;
+        }
 
-      --rowh: 46px;
+        if(!(s||e||x)) continue;
+        if(!e && x) e = x;
+        if(!s && e) s = e;
+        if(!x && e) x = e;
 
-      --arch: rgba(90, 173, 255, 0.92);
-      --interior: rgba(255, 169, 77, 0.92);
-      --land: rgba(176, 124, 255, 0.92);
-
-      --pp: rgba(255, 92, 162, 0.92);
-
-      --todayLine: rgba(255,255,255,0.70);
-      --runwayLine: rgba(255,209,138,0.90);
-
-      --ok:#8bffb2;
-      --warn:#ffd18a;
-      --bad:#ff7a7a;
-
-      --legendBorder: rgba(255,255,255,0.10);
+        if(s && (!cur.start || s < cur.start)) cur.start = s;
+        if(e && (!cur.end || e > cur.end)) cur.end = e;
+        if(x && (!cur.extEnd || x > cur.extEnd)) cur.extEnd = x;
+      }
     }
 
-    *{ box-sizing:border-box; }
-    body{ margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--text); }
+    return STAGES.map(st=>{
+      const v = stageMap.get(st);
+      const start = v.start;
+      const end = v.end;
+      const extEnd = v.extEnd;
 
-    header{
-      padding:14px 16px 12px;
-      border-bottom:1px solid var(--grid);
-      background: rgba(0,0,0,0.12);
+      const alert = { kind:"", text:"" };
+      if(v.done){
+        alert.kind = "ok";
+        alert.text = "Complete";
+      } else if(start && end){
+        const dToStart = daysBetween(today, start);
+
+        if(today > (extEnd || end)){
+          alert.kind = "bad";
+          alert.text = `Overdue +${Math.max(1, daysBetween((extEnd || end), today))}d`;
+        } else if(today >= start && today <= (extEnd || end)){
+          const spent = Math.max(0, daysBetween(start, today));
+          const left = Math.max(0, daysBetween(today, (extEnd || end)));
+          alert.kind = "warn";
+          alert.text = `Spent ${spent}d • Left ${left}d`;
+        } else if(dToStart > 0 && dToStart <= 15){
+          alert.kind = "warn";
+          alert.text = `In ${dToStart}d`;
+        }
+      }
+
+      const delDone = (v.delDone == null && v.delRemain == null) ? null : (v.delDone || 0);
+      const delRemain = (v.delDone == null && v.delRemain == null) ? null : (v.delRemain || 0);
+
+      return {
+        label: st,
+        discipline: disciplineForStage(st),
+        start,
+        end,
+        extEnd,
+        done: v.done,
+        statusText: v.statusText,
+        deliverDone: delDone,
+        deliverRemain: delRemain,
+        stagePP: (v.stagePP == null ? null : clamp(v.stagePP,0,100)),
+        alert
+      };
+    });
+  }
+
+  function computeHours(rows){
+    const AH = rows.reduce((s,r)=>s+toNumber(pick(r,FIELDS.allottedHours)),0);
+    const TCH = rows.reduce((s,r)=>s+toNumber(pick(r,FIELDS.consumedHours)),0);
+    const bhColSum = rows.reduce((s,r)=>s+toNumber(pick(r,FIELDS.balanceHours)),0);
+    const BH = Math.abs(bhColSum) > 0 ? bhColSum : (AH - TCH);
+    return { AH, TCH, BH };
+  }
+
+  function computeDeploymentPeople(rows){
+    const m = new Map();
+    for(const r of rows){
+      const cell = pick(r, FIELDS.deployment);
+      for(const item of parseDeploymentCell(cell)){
+        const name = String(item.name||"").trim() || "(Blank)";
+        const pct = Number.isFinite(item.pct) ? item.pct : 0;
+        if(pct <= 0) continue;
+        m.set(name, (m.get(name)||0) + pct);
+      }
+    }
+    return Array.from(m.entries())
+      .map(([name,pct])=>({name,pct}))
+      .sort((a,b)=>b.pct-a.pct);
+  }
+
+  function computeProjectPP(rows){
+    if(!rows.length) return 0;
+    const avg = rows.reduce((s,r)=>s+toPercent(pick(r,FIELDS.progress)),0) / rows.length;
+    return clamp(avg, 0, 100);
+  }
+
+  function computeRunwayFromPeopleAndBH(people, BH){
+    const factorDecimal = people.reduce((s,p)=>s + (p.pct/100), 0);
+    const monthlyBurn = factorDecimal * 174.25;
+
+    if(!Number.isFinite(monthlyBurn) || monthlyBurn <= 0) return { runwayMonths: null, runwayDate: null, factorDecimal, monthlyBurn };
+    if(!Number.isFinite(BH) || BH <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
+
+    const runwayMonths = BH / monthlyBurn;
+    if(!Number.isFinite(runwayMonths) || runwayMonths <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
+
+    const today = new Date();
+    const days = runwayMonths * 30.4375;
+    const runwayDate = new Date(today.getTime() + days * 86400000);
+
+    return { runwayMonths, runwayDate, factorDecimal, monthlyBurn };
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+      .replace(/\"/g,"&quot;").replace(/'/g,"&#039;");
+  }
+
+  // ---------------- DOM ----------------
+  const elTitle = document.getElementById("appTitle");
+  const elSub = document.getElementById("appSub");
+  const elControlsPanel = document.getElementById("controlsPanel");
+  const elLandingRight = document.getElementById("landingRight");
+
+  const elFile = document.getElementById("file");
+  const elStatus = document.getElementById("status");
+  const elProjectSelect = document.getElementById("projectSelect");
+  const elSearch = document.getElementById("search");
+  const elTeamRadios = document.getElementById("teamRadios");
+  const elTable = document.getElementById("table");
+  const elRowCount = document.getElementById("rowCount");
+
+  const elLandingView = document.getElementById("landingView");
+  const elDashboardView = document.getElementById("dashboardView");
+  const elBackBtn = document.getElementById("backBtn");
+
+  // ---------------- state ----------------
+  let csvRowsAll = [];
+  let allRows = [];
+  let filteredRows = [];
+  let projectNameMap = new Map();
+  let typeCols = { Architecture:null, Interior:null, Landscape:null };
+
+  let activeTeam = "";
+  let activeProject = "";
+  let runwayDate = null;
+  let view = "landing"; // "landing" | "project"
+
+  const LANDING_TITLE = "Project Intel";
+
+  function setStatus(msg, kind){
+    elStatus.textContent = msg;
+    elStatus.style.color = "";
+    if(kind === "ok") elStatus.style.color = "var(--ok)";
+    if(kind === "warn") elStatus.style.color = "var(--warn)";
+  }
+
+  function renderRadioRow(el, values, activeValue, onPick){
+    el.innerHTML = "";
+    const list = ["", ...(values||[])];
+    for(const v of list){
+      const b = document.createElement("button");
+      b.type="button";
+      b.className = "radioBtn" + ((v===activeValue) ? " active" : "");
+      b.textContent = v ? v : "All";
+      b.dataset.value = v;
+      b.onclick = ()=> onPick(v);
+      el.appendChild(b);
+    }
+  }
+  function setActiveRadio(el, activeValue){
+    for(const b of el.querySelectorAll(".radioBtn")){
+      b.classList.toggle("active", b.dataset.value === activeValue);
+    }
+  }
+
+  function buildProjectNameMap(rows){
+    projectNameMap = new Map();
+    for(const r of rows){
+      const pc = String(pick(r, FIELDS.projectCode) || "").trim();
+      const pn = String(pick(r, FIELDS.projectName) || "").trim();
+      if(pc && pn && !projectNameMap.has(pc)) projectNameMap.set(pc, pn);
+    }
+  }
+
+  function initProjectDropdown(rows){
+    const codes = uniq((rows||[])
+      .map(r=>String(pick(r,FIELDS.projectCode)||"").trim())
+      .filter(Boolean))
+      .sort((a,b)=>a.localeCompare(b));
+
+    const prev = activeProject || "";
+    elProjectSelect.innerHTML = `<option value="">Select a project…</option>` +
+      codes.map(pc=>{
+        const pn = projectNameMap.get(pc) || "";
+        const label = pn ? `${pc} — ${pn}` : pc;
+        return `<option value="${escapeHtml(pc)}">${escapeHtml(label)}</option>`;
+      }).join("");
+
+    activeProject = (prev && codes.includes(prev)) ? prev : "";
+    elProjectSelect.value = activeProject || "";
+
+    elProjectSelect.disabled = codes.length === 0;
+    elSearch.disabled = codes.length === 0;
+  }
+
+  function renderTable(rows){
+    if (!rows.length){
+      elTable.innerHTML = `<tr><td class="note">No rows to display.</td></tr>`;
+      return;
+    }
+    const cols = Object.keys(rows[0]).filter(k => k !== "__keyMap");
+    const thead = `<thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>`;
+    const tbody = `<tbody>${rows.slice(0, 400).map(r =>
+      `<tr>${cols.map(c => `<td>${escapeHtml(String(r[c] ?? ""))}</td>`).join("")}</tr>`
+    ).join("")}</tbody>`;
+    elTable.innerHTML = thead + tbody;
+  }
+
+  function rowMatchesTeam(r){
+    if(!activeTeam) return true;
+    return matchTeam(r.__teams || [], activeTeam);
+  }
+
+  function getAllTeams(rows){
+    const teams = [];
+    for(const r of (rows||[])){
+      const list = Array.isArray(r.__teams) ? r.__teams : [];
+      if(!list.length){
+        teams.push(TEAM_UNSPEC);
+      } else {
+        for(const t of list){
+          teams.push(displayTeam(String(t||"").trim()));
+        }
+      }
+    }
+    return uniq(teams).sort((a,b)=>a.localeCompare(b));
+  }
+
+  // ---------------- modules ----------------
+  const landing = initLanding(document.getElementById("landingMount"), {
+    onSelectProject: (pc)=> goToProject(pc)
+  });
+
+  const gantt = initGantt(document.getElementById("ganttMount"), {
+    fmtWindow: (a,b)=>{
+      const mm = d => String(d.getMonth()+1).padStart(2,"0");
+      return `${mm(a)}/${a.getFullYear()} → ${mm(b)}/${b.getFullYear()}`;
+    }
+  });
+
+  const metrics = initMetrics(document.getElementById("metricsMount"), {
+    onRunwaySimulated: (sim)=>{
+      runwayDate = sim?.runwayDate || null;
+      gantt.setRunway(runwayDate);
+    }
+  });
+
+  function clearHash(){
+    try{
+      const url = new URL(location.href);
+      url.hash = "";
+      history.pushState("", document.title, url.toString());
+    } catch (e){
+      location.hash = "";
+    }
+  }
+
+  function computeTeamLabel(rowsForProject){
+    const teams = [];
+    for(const r of rowsForProject){
+      for(const t of (r.__teams || [])) teams.push(String(t||"").trim());
+    }
+    const clean = uniq(teams.filter(Boolean));
+    if(!clean.length) return "—";
+    return clean.length <= 2 ? clean.join(", ") : `${clean[0]}, ${clean[1]} +${clean.length-2}`;
+  }
+
+  function computeBuiltUpArea(rowsForProject){
+    const vals = rowsForProject
+      .map(r => String(pick(r, FIELDS.builtUpArea) || "").trim())
+      .filter(Boolean);
+    if(!vals.length) return "";
+    const nums = vals.map(v => toNumber(v)).filter(n => Number.isFinite(n) && n > 0);
+    const allNumeric = nums.length === vals.length;
+    if(allNumeric){
+      const mx = Math.max(...nums);
+      return mx.toLocaleString();
+    }
+    return vals[0];
+  }
+
+  function updateHeader(){
+    if(view === "landing"){
+      elTitle.textContent = LANDING_TITLE;
+
+      if(elSub){
+        elSub.style.display = "none";
+        elSub.textContent = "";
+      }
+      if(elControlsPanel) elControlsPanel.style.display = "";
+      if(elLandingRight) elLandingRight.style.display = "";
+      return;
     }
 
-    .topbar{
-      display:flex;
-      align-items:flex-start;
-      justify-content:space-between;
-      gap:12px;
-      width:100%;
+    const rowsForProject = allRows.filter(r => String(pick(r,FIELDS.projectCode)||"").trim() === activeProject);
+    const pn = projectNameMap.get(activeProject) || "";
+    const title = pn || activeProject || "Project";
+
+    const teamLabel = computeTeamLabel(rowsForProject);
+    const bua = computeBuiltUpArea(rowsForProject);
+
+    elTitle.textContent = title;
+
+    if(elSub){
+      elSub.style.display = "";
+      elSub.textContent = `Team: ${teamLabel} • Built-up area: ${bua || "—"}`;
     }
 
-    .brand{
-      display:flex;
-      flex-direction:column;
-      gap:6px;
-      min-width: 240px;
-    }
-    .brandRow{
-      display:flex;
-      align-items:center;
-      gap:10px;
-    }
+    if(elControlsPanel) elControlsPanel.style.display = "none";
+    if(elLandingRight) elLandingRight.style.display = "none";
+  }
 
-    /* Bigger title (landing + dashboard uses same element) */
-    h1#appTitle{
-      margin:0;
-      font-size:22px;
-      letter-spacing:0.2px;
-      font-weight:750;
-      line-height:1.1;
-    }
+  function setView(next){
+    view = next;
 
-    /* Sub line: hidden on landing, shown on dashboard */
-    .sub{
-      color:var(--muted);
-      font-size:12px;
-      margin-top:0;
-    }
+    if(elLandingView) elLandingView.style.display = (view === "landing") ? "block" : "none";
+    if(elDashboardView) elDashboardView.style.display = (view === "project") ? "block" : "none";
+    if(elBackBtn) elBackBtn.style.display = (view === "project") ? "inline-flex" : "none";
 
-    .rightActions{
-      display:flex;
-      align-items:center;
-      gap:10px;
-      justify-content:flex-end;
-      flex-wrap:wrap;
-    }
+    updateHeader();
+  }
 
-    .pill{
-      font-size:12px; padding:6px 10px; border:1px solid var(--grid);
-      border-radius:999px; color:var(--muted); background: rgba(0,0,0,0.10);
-      white-space:nowrap;
-    }
+  function goToLanding(opts = {}){
+    const updateHash = opts.updateHash !== false;
+    activeProject = "";
+    if(elProjectSelect) elProjectSelect.value = "";
+    setView("landing");
+    renderLanding();
+    renderAll();
+    if(updateHash) clearHash();
+  }
 
-    label{ font-size:12px; color:var(--muted); display:flex; align-items:center; gap:8px; }
-    input[type="file"]{ color:var(--muted); }
+  function goToProject(code, opts = {}){
+    const updateHash = opts.updateHash !== false;
+    if(!code) return goToLanding(opts);
 
-    select,input[type="text"]{
-      background:#0f172a; border:1px solid var(--grid); color:var(--text);
-      border-radius:12px; padding:10px 10px; outline:none;
-      width: min(520px, 100%);
-    }
-    input[type="text"]{ width: min(420px, 100%); }
+    activeProject = code;
+    if(elProjectSelect) elProjectSelect.value = code;
+    setView("project");
+    renderAll();
+    if(updateHash) location.hash = `p=${encodeURIComponent(code)}`;
+  }
 
-    .radioBtn{
-      border:1px solid var(--chipBorder);
-      background: var(--chip);
-      color: var(--muted);
-      border-radius:999px;
-      padding:7px 10px;
-      font-size:12px;
-      cursor:pointer;
-      white-space:nowrap;
-      user-select:none;
-      transition: transform .05s ease, border-color .15s ease, color .15s ease;
-    }
-    .radioBtn:active{ transform:scale(0.985); }
-    .radioBtn.active{
-      color: var(--text);
-      border-color: rgba(139,255,178,0.55);
-      box-shadow: 0 0 0 1px rgba(139,255,178,0.18) inset;
+  function handleHashRoute(){
+    const m = String(location.hash || "").match(/p=([^&]+)/);
+    const want = m ? decodeURIComponent(m[1]) : "";
+
+    if(!want){
+      goToLanding({ updateHash:false });
+      return;
     }
 
-    /* Landing controls block (below title) */
-    #controlsPanel{
-      margin-top:10px;
-      display:flex;
-      flex-direction:column;
-      gap:10px;
+    const codes = new Set(
+      uniq(allRows.map(r=>String(pick(r,FIELDS.projectCode)||"").trim()).filter(Boolean))
+    );
+
+    if(codes.has(want)) goToProject(want, { updateHash:false });
+    else goToLanding({ updateHash:false });
+  }
+
+  function applyCsvFilters(){
+    allRows = csvRowsAll.filter(r => rowMatchesTeam(r));
+    buildProjectNameMap(allRows);
+    initProjectDropdown(allRows);
+
+    renderLanding();
+
+    if(activeProject){
+      const stillExists = allRows.some(r => String(pick(r,FIELDS.projectCode)||"").trim() === activeProject);
+      if(!stillExists){
+        goToLanding({ updateHash:false });
+        return;
+      }
     }
 
-    .controlsRow{
-      display:flex;
-      gap:10px;
-      align-items:center;
-      flex-wrap:wrap;
+    renderAll();
+  }
+
+  function setTeam(v){
+    activeTeam = normalizeTeamSelectionValue(v || "");
+    setActiveRadio(elTeamRadios, v || "");
+    applyCsvFilters();
+  }
+
+  function pickCurrentStage(stages, today){
+    const incomplete = (stages || []).filter(s => !s.done && (s.start || s.end || s.extEnd));
+    if(!incomplete.length) return null;
+
+    const started = incomplete
+      .filter(s => s.start && today >= s.start)
+      .sort((a,b)=>(b.start?.getTime?.()||0) - (a.start?.getTime?.()||0));
+    if(started.length) return started[0];
+
+    const upcoming = incomplete
+      .filter(s => s.start && today < s.start)
+      .sort((a,b)=>(a.start?.getTime?.()||0) - (a.start?.getTime?.()||0));
+    if(upcoming.length) return upcoming[0];
+
+    return incomplete[0];
+  }
+
+  function pickMostOverdueStage(stages, today){
+    const overdue = (stages || [])
+      .filter(s => !s.done)
+      .map(s=>{
+        const due = s.extEnd || s.end;
+        if(!(due instanceof Date) || isNaN(due)) return null;
+        if(today <= due) return null;
+        return { ...s, overdueDays: Math.max(1, daysBetween(due, today)) };
+      })
+      .filter(Boolean)
+      .sort((a,b)=> (b.overdueDays||0) - (a.overdueDays||0));
+    return overdue[0] || null;
+  }
+
+  function renderLanding(){
+    const today = new Date();
+    const query = elSearch.value.trim().toLowerCase();
+
+    const codes = uniq(allRows
+      .map(r=>String(pick(r,FIELDS.projectCode)||"").trim())
+      .filter(Boolean))
+      .sort((a,b)=>a.localeCompare(b));
+
+    const projects = [];
+
+    for(const pc of codes){
+      const rowsForProject = allRows.filter(r => String(pick(r,FIELDS.projectCode)||"").trim() === pc);
+      if(!rowsForProject.length) continue;
+
+      const pn = projectNameMap.get(pc) || "";
+
+      const teamsFlat = [];
+      for(const r of rowsForProject){
+        for(const t of (r.__teams || [])) teamsFlat.push(String(t||"").trim());
+      }
+      const teams = uniq(teamsFlat.filter(Boolean));
+      const team = teams.length ? (teams.length <= 2 ? teams.join(", ") : `${teams[0]}, ${teams[1]} +${teams.length-2}`) : TEAM_UNSPEC;
+
+      const stages = buildStagesFromProjectRowsWide(rowsForProject, today);
+      const current = pickCurrentStage(stages, today);
+      const missed = pickMostOverdueStage(stages, today);
+
+      const projectPP = computeProjectPP(rowsForProject);
+
+      projects.push({
+        code: pc,
+        name: pn,
+        teamType: "",   // kept for landing.module compatibility
+        team,
+        projectPP,
+        currentStage: current ? {
+          label: current.label,
+          discipline: current.discipline,
+          alertText: current.alert?.text || ""
+        } : null,
+        missedStage: missed ? {
+          label: missed.label,
+          discipline: missed.discipline,
+          overdueDays: missed.overdueDays || 0
+        } : null
+      });
     }
 
-    .radioWrap{
-      display:flex;
-      gap:10px;
-      align-items:flex-start;
-      flex-wrap:wrap;
+    projects.sort((a,b)=>{
+      const am = a.missedStage ? 1 : 0;
+      const bm = b.missedStage ? 1 : 0;
+      if(am !== bm) return bm - am;
+      return String(a.code||"").localeCompare(String(b.code||""));
+    });
+
+    let shown = projects;
+    if(query){
+      shown = projects.filter(p=>{
+        const hay = [
+          p.code, p.name, p.team,
+          p.currentStage?.label, p.currentStage?.alertText,
+          p.missedStage?.label
+        ].filter(Boolean).join(" ").toLowerCase();
+        return hay.includes(query);
+      });
     }
 
-    .radioLabel{
-      font-size:12px;
-      color:var(--muted);
-      padding-top:6px;
+    landing.setData({
+      projects: shown,
+      subtitle: csvRowsAll.length
+        ? `Showing ${shown.length} of ${projects.length} projects (team filter applied).`
+        : "Upload a file to see project tiles."
+    });
+  }
+
+  function renderAll(){
+    const query = elSearch.value.trim().toLowerCase();
+    activeProject = elProjectSelect.value || activeProject || "";
+
+    filteredRows = allRows.filter(row=>{
+      if(activeProject){
+        const code=String(pick(row,FIELDS.projectCode)||"").trim();
+        if(code !== activeProject) return false;
+      }
+      if(!query) return true;
+      return JSON.stringify(row).toLowerCase().includes(query);
+    });
+
+    elRowCount.textContent = `${filteredRows.length} rows`;
+    renderTable(filteredRows);
+
+    const rowsForProject = activeProject ? filteredRows : [];
+    const today = new Date();
+
+    const projectName = activeProject ? (projectNameMap.get(activeProject) || "") : "";
+    const titleForModules = activeProject ? (projectName ? `${activeProject} — ${projectName}` : activeProject) : "Select a project";
+
+    const stages = activeProject ? buildStagesFromProjectRowsWide(rowsForProject, today) : [];
+    const projectPP = activeProject ? computeProjectPP(rowsForProject) : 0;
+    const hours = activeProject ? computeHours(rowsForProject) : {AH:0,TCH:0,BH:0};
+    const people = activeProject ? computeDeploymentPeople(rowsForProject) : [];
+
+    const runway = computeRunwayFromPeopleAndBH(people, hours.BH);
+    runwayDate = runway.runwayDate || null;
+
+    gantt.setData({ title: titleForModules, projectPP, stages, runwayDate });
+    metrics.setData({ title: titleForModules, hours, people, runway });
+
+    gantt.setRunway(runwayDate);
+    updateHeader();
+  }
+
+  // ---------------- parsing ----------------
+  function detectDelimiter(text){
+    const sample = (text || "").replace(/^\uFEFF/, "");
+    const line = sample.split(/\r?\n/).find(l => l.trim() !== "") || "";
+    const stripped = line.replace(/"([^"]|"")*"/g, "");
+    const delims = [",",";","\t","|"];
+    let best = ",", bestCount = -1;
+    for(const d of delims){
+      const c = (stripped.split(d).length - 1);
+      if(c > bestCount){ bestCount = c; best = d; }
     }
-
-    /* IMPORTANT: no scroll, wrap instead */
-    .radioRow{
-      display:flex;
-      gap:8px;
-      align-items:center;
-      flex-wrap:wrap;
-      overflow:visible;     /* no scroll */
-      max-width:none;       /* no scroll container */
-      padding:6px 6px;
-      border:1px solid rgba(255,255,255,0.06);
-      border-radius:14px;
-      background: rgba(0,0,0,0.10);
+    return best;
+  }
+  function parseDelimited(text, delimiter){
+    const t = String(text || "").replace(/^\uFEFF/, "");
+    const rows=[]; let row=[], cur="", inQuotes=false;
+    for(let i=0;i<t.length;i++){
+      const ch=t[i];
+      if(inQuotes){
+        if(ch === '"'){
+          if(t[i+1] === '"'){ cur+='"'; i++; } else inQuotes=false;
+        } else cur+=ch;
+      } else {
+        if(ch === '"') inQuotes=true;
+        else if(ch === delimiter){ row.push(cur); cur=""; }
+        else if(ch === "\n"){ row.push(cur); rows.push(row); row=[]; cur=""; }
+        else if(ch === "\r"){ }
+        else cur+=ch;
+      }
     }
-
-    .layout{
-      display:grid;
-      grid-template-columns: 1fr 420px;
-      gap:12px;
-      padding:12px 16px 16px;
-      align-items:start;
-      width:100%;
+    row.push(cur); rows.push(row);
+    while(rows.length && rows[rows.length-1].every(c=>String(c).trim()==="")) rows.pop();
+    return rows;
+  }
+  function matrixToObjects(matrix){
+    const headers=(matrix[0]||[]).map((h,i)=>{
+      const s = String(h??"").replace(/^\uFEFF/, "").trim();
+      return s || `Column ${i+1}`;
+    });
+    const objects=[];
+    for(let r=1;r<matrix.length;r++){
+      const line=matrix[r]||[];
+      if(!line.length) continue;
+      if(line.every(c=>String(c??"").trim()==="")) continue;
+      const obj={};
+      for(let c=0;c<headers.length;c++) obj[headers[c]] = (line[c] ?? "");
+      objects.push(obj);
     }
-    @media (max-width: 1200px){
-      .layout{ grid-template-columns: 1fr; }
+    return { headers, objects };
+  }
+
+  async function importFile(file){
+    const name=(file?.name||"").toLowerCase();
+    setStatus("Loading…");
+
+    csvRowsAll=[]; allRows=[]; filteredRows=[];
+    activeTeam=""; activeProject="";
+    runwayDate = null;
+
+    elProjectSelect.innerHTML = `<option value="">Select a project…</option>`;
+    elProjectSelect.disabled = true;
+    elSearch.value = "";
+    elSearch.disabled = true;
+
+    elTeamRadios.innerHTML = "";
+    elTable.innerHTML = "";
+    elRowCount.textContent = "0 rows";
+
+    try{
+      const buildRows = (headers, objects) => {
+        const keyMap = buildHeaderIndex(headers);
+        typeCols = discoverTeamTypeColumns(headers);
+
+        csvRowsAll = objects.map(o=>{
+          const row = { ...o, __keyMap:keyMap };
+
+          // robust team derive (Team column OR Architecture/Interior/Landscape columns)
+          const info = deriveTeamInfo(row, typeCols);
+
+          // build __teams array (handles multi-team cells)
+          const teams = splitTeams(info.team);
+
+          row.__teamType = info.teamType || "";
+          row.__teams = teams;           // <-- used for filtering + radio list
+          row.__team = teams[0] || "";   // <-- kept for display fallback
+
+          return row;
+        });
+
+        // RADIO: ALL teams from ALL rows (flattened)
+        const teamsAll = getAllTeams(csvRowsAll);
+        renderRadioRow(elTeamRadios, teamsAll, "", (v)=> setTeam(v));
+
+        applyCsvFilters();
+        handleHashRoute();
+        if(!location.hash) goToLanding({ updateHash:false });
+      };
+
+      if(name.endsWith(".csv") || name.endsWith(".tsv") || name.endsWith(".txt")){
+        const text = await file.text();
+        const delim = detectDelimiter(text);
+        const matrix = parseDelimited(text, delim);
+        const { headers, objects } = matrixToObjects(matrix);
+
+        buildRows(headers, objects);
+
+        setStatus(`Loaded (${delim === "\t" ? "TAB" : delim} • ${csvRowsAll.length} rows)`, "ok");
+        return;
+      }
+
+      if(name.endsWith(".xlsx") || name.endsWith(".xls")){
+        if(typeof XLSX === "undefined") throw new Error("XLSX library not loaded (check network).");
+
+        const data = await file.arrayBuffer();
+        const workbook = XLSX.read(data,{ type:"array", cellDates:true });
+        if(!workbook.SheetNames?.length) throw new Error("No sheets found.");
+        const firstSheet = workbook.SheetNames[0];
+        const ws = workbook.Sheets[firstSheet];
+        const matrix = XLSX.utils.sheet_to_json(ws,{ header:1, defval:"", raw:false });
+        const { headers, objects } = matrixToObjects(matrix);
+
+        buildRows(headers, objects);
+
+        setStatus(`Imported "${file.name}" (sheet: ${firstSheet})`, "ok");
+        return;
+      }
+
+      setStatus("Unsupported file type.", "warn");
+    } catch(err){
+      console.error(err);
+      setStatus(`Failed to load: ${err?.message || err}`, "warn");
     }
+  }
 
-    .card{
-      background:var(--card); border:1px solid var(--grid);
-      border-radius:14px; padding:12px; box-shadow:0 10px 30px rgba(0,0,0,.25);
-    }
-    .note{ color:var(--muted); font-size:12px; line-height:1.45; margin-top:8px; }
+  // ---------------- events ----------------
+  elFile.addEventListener("change", async ()=>{
+    const f = elFile.files?.[0];
+    if(f) await importFile(f);
+  });
 
-    table{ width:100%; border-collapse:collapse; font-size:12px; }
-    th,td{ border-bottom:1px solid var(--grid); padding:8px 6px; text-align:left; vertical-align:top; }
-    th{ color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--card); }
-  </style>
-</head>
+  elProjectSelect.addEventListener("change", ()=>{
+    const pc = elProjectSelect.value || "";
+    if(pc) goToProject(pc);
+    else goToLanding();
+  });
 
-<body>
-<header>
-  <div class="topbar">
-    <div class="brand">
-      <div class="brandRow">
-        <button id="backBtn" type="button" class="radioBtn" style="display:none;">← Projects</button>
-        <h1 id="appTitle">Project Intel</h1>
-      </div>
+  elSearch.addEventListener("input", ()=>{
+    if(view === "landing") renderLanding();
+    else renderAll();
+  });
 
-      <!-- Hidden on landing, shown on dashboard -->
-      <div id="appSub" class="sub" style="display:none;"></div>
-    </div>
+  if(elBackBtn){
+    elBackBtn.onclick = ()=> goToLanding();
+  }
 
-    <!-- Upload is top-right on landing; hidden on dashboard via app.js -->
-    <div id="landingRight" class="rightActions">
-      <label>
-        <span class="pill">Upload</span>
-        <input id="file" type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" />
-      </label>
-      <span id="status" class="pill">No file loaded</span>
-    </div>
-  </div>
+  window.addEventListener("hashchange", ()=>{
+    if(!csvRowsAll.length) return;
+    handleHashRoute();
+  });
 
-  <!-- Landing-only controls (below title) -->
-  <div id="controlsPanel">
-    <div class="controlsRow">
-      <select id="projectSelect" disabled>
-        <option value="">Select a project…</option>
-      </select>
+  // Initial
+  setView("landing");
+  landing.setData({ projects:[], subtitle:"Upload a file to see project tiles." });
 
-      <input id="search" type="text" placeholder="Search projects…" disabled />
-    </div>
+  gantt.setData({ title:"Select a project", projectPP:0, stages:[], runwayDate:null });
+  metrics.setData({ title:"", hours:{AH:0,TCH:0,BH:0}, people:[], runway:null });
 
-    <div class="radioWrap">
-      <span class="radioLabel">Team</span>
-      <div id="teamRadios" class="radioRow"></div>
-    </div>
-  </div>
-</header>
-
-<!-- Landing page view -->
-<div id="landingView" style="padding:12px 16px 16px;">
-  <div class="card">
-    <div id="landingMount"></div>
-  </div>
-</div>
-
-<!-- Dashboard view -->
-<div id="dashboardView" style="display:none;">
-  <div class="layout">
-    <main class="card">
-      <div id="ganttMount"></div>
-    </main>
-
-    <aside class="card">
-      <div id="metricsMount"></div>
-    </aside>
-  </div>
-
-  <div style="padding:0 16px 16px;">
-    <div class="card">
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;">
-        <b style="font-size:13px;">Raw data (filtered)</b>
-        <span class="pill" id="rowCount">0 rows</span>
-      </div>
-      <div class="note">Shows up to 400 rows.</div>
-      <div style="max-height:520px; overflow:auto; border-radius:12px; margin-top:10px;">
-        <table id="table"></table>
-      </div>
-    </div>
-  </div>
-</div>
-
-<script type="module" src="./app.js"></script>
-</body>
-</html>
+  renderLanding();
+}
