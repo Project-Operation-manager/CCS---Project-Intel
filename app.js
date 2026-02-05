@@ -1,6 +1,5 @@
 import { initGantt } from "./modules/gantt.module.js";
 import { initMetrics } from "./modules/metrics.module.js";
-import { initLanding } from "./modules/landing.module.js";
 
 window.addEventListener("DOMContentLoaded", () => startApp());
 
@@ -8,6 +7,9 @@ function startApp(){
   const TEAM_TYPES_FIXED = ["Architecture","Interior","Landscape"];
   const TEAM_UNSPEC = "(Unspecified)";
   const TEAM_BLANK_SENTINEL = "__BLANK__";
+
+  // Auto-load this CSV from the repo (same folder as app.js)
+  const DEFAULT_CSV_URL = new URL("./sheetjs.csv", import.meta.url);
 
   const STAGES = [
     "CD1","CD2","CD3","CD4","CD5",
@@ -19,6 +21,7 @@ function startApp(){
     "DC","CO"
   ];
 
+  // Discipline mapping
   const DISCIPLINE = {
     Architecture: new Set(["CD1","CD2","CD5","SD1","SD2","AD","DD1","DD2","TD1","TD2","TD3","WD20","WD40","WD60"]),
     Interior:     new Set(["CD3","SD3","DD3","TD4","WD100"]),
@@ -28,11 +31,7 @@ function startApp(){
   const FIELDS = {
     projectCode:   ["PC","Project Code","ProjectCode","Code"],
     projectName:   ["Project Name","Project","Name","ProjectName"],
-
-    // Team might be here OR in the discipline columns (Architecture/Interior/Landscape)
     teamName:      ["Team","Team Name","TeamName","TEAM","Team/Name","Team_Name","Team - Name"],
-
-    builtUpArea:   ["Built up area","Built-up area","BuiltUpArea","BUA","Built Up Area","Builtup Area","Built Up","Area"],
 
     allottedHours: ["AH","Allotted hours","Allotted Hours","Allotted","Allocated hours","Allocated Hours"],
     consumedHours: ["TCH","Total consumed hours","Total Consumed Hours","Consumed hours","Consumed Hours","Consumed"],
@@ -42,7 +41,7 @@ function startApp(){
     progress:      ["PP","Project progress","Project progess","Progress"],
   };
 
-  // ---------------- helpers ----------------
+  // ---- helpers
   function normalizeKey(k){
     return String(k||"").replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s_-]+/g,"");
   }
@@ -67,7 +66,6 @@ function startApp(){
     return out;
   }
   function uniq(arr){ return Array.from(new Set(arr)); }
-  function clamp(n,a,b){ return Math.max(a, Math.min(b,n)); }
 
   function toNumber(v){
     if(v==null) return 0;
@@ -92,6 +90,7 @@ function startApp(){
     if(n > 0 && n <= 1) return n * 100;
     return n;
   }
+  function clamp(n,a,b){ return Math.max(a, Math.min(b,n)); }
 
   function parseDate(v){
     if(v==null) return null;
@@ -142,21 +141,6 @@ function startApp(){
     return /[a-zA-Z]/.test(String(raw||""));
   }
 
-  // Split multi-team cells into individual team names
-  function splitTeams(raw){
-    const s = String(raw||"").trim();
-    if(!s) return [];
-    // split on comma, semicolon, slash, pipe, and " & "
-    return s
-      .replace(/\s*&\s*/g, ",")
-      .split(/[,;\/|]+/g)
-      .map(x=>x.trim())
-      .filter(Boolean);
-  }
-
-  function displayTeam(t){ return t ? t : TEAM_UNSPEC; }
-  function normalizeTeamSelectionValue(v){ return (v === TEAM_UNSPEC) ? TEAM_BLANK_SENTINEL : v; }
-
   function discoverTeamTypeColumns(headers){
     const normHeaders = headers.map(h => ({ raw:h, n:normalizeKey(h) }));
     function firstMatch(predicate){
@@ -169,9 +153,6 @@ function startApp(){
     return { Architecture: arch, Interior: interior, Landscape: landscape };
   }
 
-  // This restores the “old” robust behavior:
-  // - If Architecture/Interior/Landscape columns contain a team name, use it.
-  // - If they contain flags (Y/1/True), fallback to Team column.
   function deriveTeamInfo(row, typeCols){
     const fallbackTeam = String(pick(row, FIELDS.teamName) || "").trim();
 
@@ -188,19 +169,18 @@ function startApp(){
       }
       return { teamType:type, team: raw };
     }
-    return { teamType:"", team: fallbackTeam || "" };
+    return { teamType:"", team:"" };
   }
 
-  function matchTeam(rowTeams, activeTeam){
-    const list = Array.isArray(rowTeams) ? rowTeams : [];
-    if(activeTeam === TEAM_BLANK_SENTINEL){
-      // “Unspecified” means rows with no teams
-      return list.length === 0 || list.every(t => !String(t||"").trim());
-    }
-    const target = String(activeTeam||"").trim().toLowerCase();
-    return list.some(t => String(t||"").trim().toLowerCase() === target);
+  function displayTeam(t){ return t ? t : TEAM_UNSPEC; }
+  function normalizeTeamSelectionValue(v){ return (v === TEAM_UNSPEC) ? TEAM_BLANK_SENTINEL : v; }
+  function matchTeam(rowTeam, activeTeam){
+    const rt = String(rowTeam || "").trim().toLowerCase();
+    if(activeTeam === TEAM_BLANK_SENTINEL) return rt === "";
+    return rt === String(activeTeam||"").trim().toLowerCase();
   }
 
+  // Deployment parsing: keep ABSOLUTE percentages exactly as written
   function parseDeploymentCell(v){
     const s=String(v||"").trim(); if(!s) return [];
     return s.split(",")
@@ -358,12 +338,12 @@ function startApp(){
       } else if(start && end){
         const dToStart = daysBetween(today, start);
 
-        if(today > (extEnd || end)){
+        if(today > end){
           alert.kind = "bad";
-          alert.text = `Overdue +${Math.max(1, daysBetween((extEnd || end), today))}d`;
-        } else if(today >= start && today <= (extEnd || end)){
+          alert.text = `Overdue +${Math.max(1, daysBetween(end, today))}d`;
+        } else if(today >= start && today <= end){
           const spent = Math.max(0, daysBetween(start, today));
-          const left = Math.max(0, daysBetween(today, (extEnd || end)));
+          const left = Math.max(0, daysBetween(today, end));
           alert.kind = "warn";
           alert.text = `Spent ${spent}d • Left ${left}d`;
         } else if(dToStart > 0 && dToStart <= 15){
@@ -438,43 +418,28 @@ function startApp(){
     return { runwayMonths, runwayDate, factorDecimal, monthlyBurn };
   }
 
-  function escapeHtml(s){
-    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
-      .replace(/\"/g,"&quot;").replace(/'/g,"&#039;");
-  }
-
-  // ---------------- DOM ----------------
-  const elTitle = document.getElementById("appTitle");
-  const elSub = document.getElementById("appSub");
-  const elControlsPanel = document.getElementById("controlsPanel");
-  const elLandingRight = document.getElementById("landingRight");
-
+  // ---- DOM
   const elFile = document.getElementById("file");
   const elStatus = document.getElementById("status");
   const elProjectSelect = document.getElementById("projectSelect");
   const elSearch = document.getElementById("search");
+  const elTeamTypeRadios = document.getElementById("teamTypeRadios");
   const elTeamRadios = document.getElementById("teamRadios");
   const elTable = document.getElementById("table");
   const elRowCount = document.getElementById("rowCount");
 
-  const elLandingView = document.getElementById("landingView");
-  const elDashboardView = document.getElementById("dashboardView");
-  const elBackBtn = document.getElementById("backBtn");
-
-  // ---------------- state ----------------
+  // ---- state
   let csvRowsAll = [];
   let allRows = [];
   let filteredRows = [];
   let projectNameMap = new Map();
   let typeCols = { Architecture:null, Interior:null, Landscape:null };
-
+  let activeTeamType = "";
   let activeTeam = "";
   let activeProject = "";
   let runwayDate = null;
-  let view = "landing"; // "landing" | "project"
 
-  const LANDING_TITLE = "Project Intel";
-
+  // ---- UI helpers
   function setStatus(msg, kind){
     elStatus.textContent = msg;
     elStatus.style.color = "";
@@ -524,7 +489,8 @@ function startApp(){
         return `<option value="${escapeHtml(pc)}">${escapeHtml(label)}</option>`;
       }).join("");
 
-    activeProject = (prev && codes.includes(prev)) ? prev : "";
+    if(prev && codes.includes(prev)) activeProject = prev;
+    else activeProject = codes[0] || "";
     elProjectSelect.value = activeProject || "";
 
     elProjectSelect.disabled = codes.length === 0;
@@ -544,36 +510,63 @@ function startApp(){
     elTable.innerHTML = thead + tbody;
   }
 
-  function rowMatchesTeam(r){
-    if(!activeTeam) return true;
-    return matchTeam(r.__teams || [], activeTeam);
+  function escapeHtml(s){
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+      .replace(/\"/g,"&quot;").replace(/'/g,"&#039;");
   }
 
-  function getAllTeams(rows){
-    const teams = [];
-    for(const r of (rows||[])){
-      const list = Array.isArray(r.__teams) ? r.__teams : [];
-      if(!list.length){
-        teams.push(TEAM_UNSPEC);
-      } else {
-        for(const t of list){
-          teams.push(displayTeam(String(t||"").trim()));
-        }
-      }
-    }
+  // ---- filters
+  function rowMatchesTeamType(r){
+    if(!activeTeamType) return true;
+    return String(r.__teamType || "").toLowerCase() === activeTeamType.toLowerCase();
+  }
+  function rowMatchesTeam(r){
+    if(!activeTeam) return true;
+    return matchTeam(r.__team || "", activeTeam);
+  }
+
+  function getTeamsForSelectedType(){
+    const teams = csvRowsAll
+      .filter(r => rowMatchesTeamType(r))
+      .map(r => displayTeam(String(r.__team || "").trim()))
+      .filter(Boolean);
     return uniq(teams).sort((a,b)=>a.localeCompare(b));
   }
 
-  // ---------------- modules ----------------
-  const landing = initLanding(document.getElementById("landingMount"), {
-    onSelectProject: (pc)=> goToProject(pc)
-  });
+  function applyCsvFilters(){
+    allRows = csvRowsAll.filter(r => rowMatchesTeamType(r) && rowMatchesTeam(r));
+    buildProjectNameMap(allRows);
+    initProjectDropdown(allRows);
+    renderAll();
+  }
 
+  function setTeamType(v){
+    activeTeamType = v || "";
+    setActiveRadio(elTeamTypeRadios, activeTeamType);
+
+    activeTeam = "";
+    setActiveRadio(elTeamRadios, "");
+
+    const teams = getTeamsForSelectedType();
+    renderRadioRow(elTeamRadios, teams, "", (vv)=> setTeam(vv));
+
+    applyCsvFilters();
+  }
+  function setTeam(v){
+    activeTeam = normalizeTeamSelectionValue(v || "");
+    setActiveRadio(elTeamRadios, v || "");
+    applyCsvFilters();
+  }
+
+  function fmtMonthYear(d){
+    const mm = String(d.getMonth()+1).padStart(2,"0");
+    const yy = d.getFullYear();
+    return `${mm}/${yy}`;
+  }
+
+  // ---- modules
   const gantt = initGantt(document.getElementById("ganttMount"), {
-    fmtWindow: (a,b)=>{
-      const mm = d => String(d.getMonth()+1).padStart(2,"0");
-      return `${mm(a)}/${a.getFullYear()} → ${mm(b)}/${b.getFullYear()}`;
-    }
+    fmtWindow: (a,b)=> `${fmtMonthYear(a)} → ${fmtMonthYear(b)}`
   });
 
   const metrics = initMetrics(document.getElementById("metricsMount"), {
@@ -583,253 +576,9 @@ function startApp(){
     }
   });
 
-  function clearHash(){
-    try{
-      const url = new URL(location.href);
-      url.hash = "";
-      history.pushState("", document.title, url.toString());
-    } catch (e){
-      location.hash = "";
-    }
-  }
-
-  function computeTeamLabel(rowsForProject){
-    const teams = [];
-    for(const r of rowsForProject){
-      for(const t of (r.__teams || [])) teams.push(String(t||"").trim());
-    }
-    const clean = uniq(teams.filter(Boolean));
-    if(!clean.length) return "—";
-    return clean.length <= 2 ? clean.join(", ") : `${clean[0]}, ${clean[1]} +${clean.length-2}`;
-  }
-
-  function computeBuiltUpArea(rowsForProject){
-    const vals = rowsForProject
-      .map(r => String(pick(r, FIELDS.builtUpArea) || "").trim())
-      .filter(Boolean);
-    if(!vals.length) return "";
-    const nums = vals.map(v => toNumber(v)).filter(n => Number.isFinite(n) && n > 0);
-    const allNumeric = nums.length === vals.length;
-    if(allNumeric){
-      const mx = Math.max(...nums);
-      return mx.toLocaleString();
-    }
-    return vals[0];
-  }
-
-  function updateHeader(){
-    if(view === "landing"){
-      elTitle.textContent = LANDING_TITLE;
-
-      if(elSub){
-        elSub.style.display = "none";
-        elSub.textContent = "";
-      }
-      if(elControlsPanel) elControlsPanel.style.display = "";
-      if(elLandingRight) elLandingRight.style.display = "";
-      return;
-    }
-
-    const rowsForProject = allRows.filter(r => String(pick(r,FIELDS.projectCode)||"").trim() === activeProject);
-    const pn = projectNameMap.get(activeProject) || "";
-    const title = pn || activeProject || "Project";
-
-    const teamLabel = computeTeamLabel(rowsForProject);
-    const bua = computeBuiltUpArea(rowsForProject);
-
-    elTitle.textContent = title;
-
-    if(elSub){
-      elSub.style.display = "";
-      elSub.textContent = `Team: ${teamLabel} • Built-up area: ${bua || "—"}`;
-    }
-
-    if(elControlsPanel) elControlsPanel.style.display = "none";
-    if(elLandingRight) elLandingRight.style.display = "none";
-  }
-
-  function setView(next){
-    view = next;
-
-    if(elLandingView) elLandingView.style.display = (view === "landing") ? "block" : "none";
-    if(elDashboardView) elDashboardView.style.display = (view === "project") ? "block" : "none";
-    if(elBackBtn) elBackBtn.style.display = (view === "project") ? "inline-flex" : "none";
-
-    updateHeader();
-  }
-
-  function goToLanding(opts = {}){
-    const updateHash = opts.updateHash !== false;
-    activeProject = "";
-    if(elProjectSelect) elProjectSelect.value = "";
-    setView("landing");
-    renderLanding();
-    renderAll();
-    if(updateHash) clearHash();
-  }
-
-  function goToProject(code, opts = {}){
-    const updateHash = opts.updateHash !== false;
-    if(!code) return goToLanding(opts);
-
-    activeProject = code;
-    if(elProjectSelect) elProjectSelect.value = code;
-    setView("project");
-    renderAll();
-    if(updateHash) location.hash = `p=${encodeURIComponent(code)}`;
-  }
-
-  function handleHashRoute(){
-    const m = String(location.hash || "").match(/p=([^&]+)/);
-    const want = m ? decodeURIComponent(m[1]) : "";
-
-    if(!want){
-      goToLanding({ updateHash:false });
-      return;
-    }
-
-    const codes = new Set(
-      uniq(allRows.map(r=>String(pick(r,FIELDS.projectCode)||"").trim()).filter(Boolean))
-    );
-
-    if(codes.has(want)) goToProject(want, { updateHash:false });
-    else goToLanding({ updateHash:false });
-  }
-
-  function applyCsvFilters(){
-    allRows = csvRowsAll.filter(r => rowMatchesTeam(r));
-    buildProjectNameMap(allRows);
-    initProjectDropdown(allRows);
-
-    renderLanding();
-
-    if(activeProject){
-      const stillExists = allRows.some(r => String(pick(r,FIELDS.projectCode)||"").trim() === activeProject);
-      if(!stillExists){
-        goToLanding({ updateHash:false });
-        return;
-      }
-    }
-
-    renderAll();
-  }
-
-  function setTeam(v){
-    activeTeam = normalizeTeamSelectionValue(v || "");
-    setActiveRadio(elTeamRadios, v || "");
-    applyCsvFilters();
-  }
-
-  function pickCurrentStage(stages, today){
-    const incomplete = (stages || []).filter(s => !s.done && (s.start || s.end || s.extEnd));
-    if(!incomplete.length) return null;
-
-    const started = incomplete
-      .filter(s => s.start && today >= s.start)
-      .sort((a,b)=>(b.start?.getTime?.()||0) - (a.start?.getTime?.()||0));
-    if(started.length) return started[0];
-
-    const upcoming = incomplete
-      .filter(s => s.start && today < s.start)
-      .sort((a,b)=>(a.start?.getTime?.()||0) - (a.start?.getTime?.()||0));
-    if(upcoming.length) return upcoming[0];
-
-    return incomplete[0];
-  }
-
-  function pickMostOverdueStage(stages, today){
-    const overdue = (stages || [])
-      .filter(s => !s.done)
-      .map(s=>{
-        const due = s.extEnd || s.end;
-        if(!(due instanceof Date) || isNaN(due)) return null;
-        if(today <= due) return null;
-        return { ...s, overdueDays: Math.max(1, daysBetween(due, today)) };
-      })
-      .filter(Boolean)
-      .sort((a,b)=> (b.overdueDays||0) - (a.overdueDays||0));
-    return overdue[0] || null;
-  }
-
-  function renderLanding(){
-    const today = new Date();
-    const query = elSearch.value.trim().toLowerCase();
-
-    const codes = uniq(allRows
-      .map(r=>String(pick(r,FIELDS.projectCode)||"").trim())
-      .filter(Boolean))
-      .sort((a,b)=>a.localeCompare(b));
-
-    const projects = [];
-
-    for(const pc of codes){
-      const rowsForProject = allRows.filter(r => String(pick(r,FIELDS.projectCode)||"").trim() === pc);
-      if(!rowsForProject.length) continue;
-
-      const pn = projectNameMap.get(pc) || "";
-
-      const teamsFlat = [];
-      for(const r of rowsForProject){
-        for(const t of (r.__teams || [])) teamsFlat.push(String(t||"").trim());
-      }
-      const teams = uniq(teamsFlat.filter(Boolean));
-      const team = teams.length ? (teams.length <= 2 ? teams.join(", ") : `${teams[0]}, ${teams[1]} +${teams.length-2}`) : TEAM_UNSPEC;
-
-      const stages = buildStagesFromProjectRowsWide(rowsForProject, today);
-      const current = pickCurrentStage(stages, today);
-      const missed = pickMostOverdueStage(stages, today);
-
-      const projectPP = computeProjectPP(rowsForProject);
-
-      projects.push({
-        code: pc,
-        name: pn,
-        teamType: "",   // kept for landing.module compatibility
-        team,
-        projectPP,
-        currentStage: current ? {
-          label: current.label,
-          discipline: current.discipline,
-          alertText: current.alert?.text || ""
-        } : null,
-        missedStage: missed ? {
-          label: missed.label,
-          discipline: missed.discipline,
-          overdueDays: missed.overdueDays || 0
-        } : null
-      });
-    }
-
-    projects.sort((a,b)=>{
-      const am = a.missedStage ? 1 : 0;
-      const bm = b.missedStage ? 1 : 0;
-      if(am !== bm) return bm - am;
-      return String(a.code||"").localeCompare(String(b.code||""));
-    });
-
-    let shown = projects;
-    if(query){
-      shown = projects.filter(p=>{
-        const hay = [
-          p.code, p.name, p.team,
-          p.currentStage?.label, p.currentStage?.alertText,
-          p.missedStage?.label
-        ].filter(Boolean).join(" ").toLowerCase();
-        return hay.includes(query);
-      });
-    }
-
-    landing.setData({
-      projects: shown,
-      subtitle: csvRowsAll.length
-        ? `Showing ${shown.length} of ${projects.length} projects (team filter applied).`
-        : "Upload a file to see project tiles."
-    });
-  }
-
   function renderAll(){
     const query = elSearch.value.trim().toLowerCase();
-    activeProject = elProjectSelect.value || activeProject || "";
+    activeProject = elProjectSelect.value || "";
 
     filteredRows = allRows.filter(row=>{
       if(activeProject){
@@ -847,7 +596,7 @@ function startApp(){
     const today = new Date();
 
     const projectName = activeProject ? (projectNameMap.get(activeProject) || "") : "";
-    const titleForModules = activeProject ? (projectName ? `${activeProject} — ${projectName}` : activeProject) : "Select a project";
+    const title = activeProject ? (projectName ? `${activeProject} — ${projectName}` : activeProject) : "Select a project";
 
     const stages = activeProject ? buildStagesFromProjectRowsWide(rowsForProject, today) : [];
     const projectPP = activeProject ? computeProjectPP(rowsForProject) : 0;
@@ -857,14 +606,13 @@ function startApp(){
     const runway = computeRunwayFromPeopleAndBH(people, hours.BH);
     runwayDate = runway.runwayDate || null;
 
-    gantt.setData({ title: titleForModules, projectPP, stages, runwayDate });
-    metrics.setData({ title: titleForModules, hours, people, runway });
+    gantt.setData({ title, projectPP, stages, runwayDate });
+    metrics.setData({ title, hours, people, runway });
 
     gantt.setRunway(runwayDate);
-    updateHeader();
   }
 
-  // ---------------- parsing ----------------
+  // ---- parsing
   function detectDelimiter(text){
     const sample = (text || "").replace(/^\uFEFF/, "");
     const line = sample.split(/\r?\n/).find(l => l.trim() !== "") || "";
@@ -920,7 +668,7 @@ function startApp(){
     setStatus("Loading…");
 
     csvRowsAll=[]; allRows=[]; filteredRows=[];
-    activeTeam=""; activeProject="";
+    activeTeamType=""; activeTeam=""; activeProject="";
     runwayDate = null;
 
     elProjectSelect.innerHTML = `<option value="">Select a project…</option>`;
@@ -928,47 +676,34 @@ function startApp(){
     elSearch.value = "";
     elSearch.disabled = true;
 
+    elTeamTypeRadios.innerHTML = "";
     elTeamRadios.innerHTML = "";
     elTable.innerHTML = "";
     elRowCount.textContent = "0 rows";
 
     try{
-      const buildRows = (headers, objects) => {
-        const keyMap = buildHeaderIndex(headers);
-        typeCols = discoverTeamTypeColumns(headers);
-
-        csvRowsAll = objects.map(o=>{
-          const row = { ...o, __keyMap:keyMap };
-
-          // robust team derive (Team column OR Architecture/Interior/Landscape columns)
-          const info = deriveTeamInfo(row, typeCols);
-
-          // build __teams array (handles multi-team cells)
-          const teams = splitTeams(info.team);
-
-          row.__teamType = info.teamType || "";
-          row.__teams = teams;           // <-- used for filtering + radio list
-          row.__team = teams[0] || "";   // <-- kept for display fallback
-
-          return row;
-        });
-
-        // RADIO: ALL teams from ALL rows (flattened)
-        const teamsAll = getAllTeams(csvRowsAll);
-        renderRadioRow(elTeamRadios, teamsAll, "", (v)=> setTeam(v));
-
-        applyCsvFilters();
-        handleHashRoute();
-        if(!location.hash) goToLanding({ updateHash:false });
-      };
-
       if(name.endsWith(".csv") || name.endsWith(".tsv") || name.endsWith(".txt")){
         const text = await file.text();
         const delim = detectDelimiter(text);
         const matrix = parseDelimited(text, delim);
         const { headers, objects } = matrixToObjects(matrix);
+        const keyMap = buildHeaderIndex(headers);
 
-        buildRows(headers, objects);
+        typeCols = discoverTeamTypeColumns(headers);
+
+        csvRowsAll = objects.map(o=>{
+          const row = { ...o, __keyMap:keyMap };
+          const info = deriveTeamInfo(row, typeCols);
+          row.__teamType = info.teamType || "";
+          row.__team = info.team || "";
+          return row;
+        });
+
+        renderRadioRow(elTeamTypeRadios, TEAM_TYPES_FIXED, "", setTeamType);
+        const teamsAll = uniq(csvRowsAll.map(r=>displayTeam(String(r.__team||"").trim()))).sort((a,b)=>a.localeCompare(b));
+        renderRadioRow(elTeamRadios, teamsAll, "", (v)=> setTeam(v));
+
+        applyCsvFilters();
 
         setStatus(`Loaded (${delim === "\t" ? "TAB" : delim} • ${csvRowsAll.length} rows)`, "ok");
         return;
@@ -984,9 +719,23 @@ function startApp(){
         const ws = workbook.Sheets[firstSheet];
         const matrix = XLSX.utils.sheet_to_json(ws,{ header:1, defval:"", raw:false });
         const { headers, objects } = matrixToObjects(matrix);
+        const keyMap = buildHeaderIndex(headers);
 
-        buildRows(headers, objects);
+        typeCols = discoverTeamTypeColumns(headers);
 
+        csvRowsAll = objects.map(o=>{
+          const row = { ...o, __keyMap:keyMap };
+          const info = deriveTeamInfo(row, typeCols);
+          row.__teamType = info.teamType || "";
+          row.__team = info.team || "";
+          return row;
+        });
+
+        renderRadioRow(elTeamTypeRadios, TEAM_TYPES_FIXED, "", setTeamType);
+        const teamsAll = uniq(csvRowsAll.map(r=>displayTeam(String(r.__team||"").trim()))).sort((a,b)=>a.localeCompare(b));
+        renderRadioRow(elTeamRadios, teamsAll, "", (v)=> setTeam(v));
+
+        applyCsvFilters();
         setStatus(`Imported "${file.name}" (sheet: ${firstSheet})`, "ok");
         return;
       }
@@ -998,39 +747,46 @@ function startApp(){
     }
   }
 
-  // ---------------- events ----------------
+  // NEW: auto-load ./sheetjs.csv from GitHub repo on first load
+  async function autoLoadDefaultCsv(){
+    // If you're opening index.html directly (file://), fetch won't work reliably.
+    if(location.protocol === "file:"){
+      setStatus(`Tip: open via a web server or GitHub Pages to auto-load sheetjs.csv`, "warn");
+      return;
+    }
+
+    try{
+      setStatus("Loading sheetjs.csv from repo…");
+
+      const res = await fetch(DEFAULT_CSV_URL.toString(), { cache: "no-store" });
+      if(!res.ok) throw new Error(`HTTP ${res.status} (${res.statusText})`);
+
+      const blob = await res.blob();
+      const file = new File([blob], "sheetjs.csv", {
+        type: blob.type || "text/csv"
+      });
+
+      await importFile(file);
+      setStatus(`Auto-loaded sheetjs.csv`, "ok");
+    } catch(err){
+      console.warn("Auto-load failed:", err);
+      setStatus(`Auto-load failed (check sheetjs.csv path / GitHub Pages publish): ${err?.message || err}`, "warn");
+      // user can still upload manually
+    }
+  }
+
+  // ---- events
   elFile.addEventListener("change", async ()=>{
     const f = elFile.files?.[0];
     if(f) await importFile(f);
   });
-
-  elProjectSelect.addEventListener("change", ()=>{
-    const pc = elProjectSelect.value || "";
-    if(pc) goToProject(pc);
-    else goToLanding();
-  });
-
-  elSearch.addEventListener("input", ()=>{
-    if(view === "landing") renderLanding();
-    else renderAll();
-  });
-
-  if(elBackBtn){
-    elBackBtn.onclick = ()=> goToLanding();
-  }
-
-  window.addEventListener("hashchange", ()=>{
-    if(!csvRowsAll.length) return;
-    handleHashRoute();
-  });
+  elProjectSelect.addEventListener("change", renderAll);
+  elSearch.addEventListener("input", renderAll);
 
   // Initial
-  setView("landing");
-  landing.setData({ projects:[], subtitle:"Upload a file to see project tiles." });
-
   gantt.setData({ title:"Select a project", projectPP:0, stages:[], runwayDate:null });
   metrics.setData({ title:"", hours:{AH:0,TCH:0,BH:0}, people:[], runway:null });
 
-  renderLanding();
+  // Kick off auto-load
+  autoLoadDefaultCsv();
 }
-
