@@ -4,10 +4,12 @@ import { initMetrics } from "./modules/metrics.module.js";
 window.addEventListener("DOMContentLoaded", () => startApp());
 
 function startApp(){
-  // ---- constants
   const TEAM_TYPES_FIXED = ["Architecture","Interior","Landscape"];
   const TEAM_UNSPEC = "(Unspecified)";
   const TEAM_BLANK_SENTINEL = "__BLANK__";
+
+  // Auto-load this CSV from the repo (relative to app.js)
+  const DEFAULT_CSV_URL = new URL("./sheetjs.csv", import.meta.url);
 
   const STAGES = [
     "CD1","CD2","CD3","CD4","CD5",
@@ -19,7 +21,7 @@ function startApp(){
     "DC","CO"
   ];
 
-  // Discipline mapping (drives bar color)
+  // Discipline mapping for stage colors
   const DISCIPLINE = {
     Architecture: new Set(["CD1","CD2","CD5","SD1","SD2","AD","DD1","DD2","TD1","TD2","TD3","WD20","WD40","WD60"]),
     Interior:     new Set(["CD3","SD3","DD3","TD4","WD100"]),
@@ -30,29 +32,55 @@ function startApp(){
   const FIELDS = {
     projectCode:   ["PC","Project Code","ProjectCode","Code"],
     projectName:   ["Project Name","Project","Name","ProjectName"],
+    projectStatus: ["PS","Project Status","Status"],
+    bua:           ["BUA","Built up area","Built Up Area","Built-up area","Builtup Area"],
 
     allottedHours: ["AH","Allotted hours","Allotted Hours","Allotted","Allocated hours","Allocated Hours"],
     consumedHours: ["TCH","Total consumed hours","Total Consumed Hours","Consumed hours","Consumed Hours","Consumed"],
     balanceHours:  ["BH","Balanced hours","Balance hours","Balance Hours","Balance"],
 
-    deployment:    ["DYT","Deployment","Deployement"],
+    deployment:    ["DYT","Deployment","Deployement","Deployement "],
     progress:      ["PP","Project progress","Project progess","Progress"],
   };
 
-  // ---- helpers
+  // ---------- DOM (some pages won't have all of these) ----------
+  const $ = (id)=> document.getElementById(id);
+
+  const elFile = $("file");
+  const elStatus = $("status");
+  const elProjectSelect = $("projectSelect");
+  const elSearch = $("search");
+  const elTeamTypeRadios = $("teamTypeRadios");
+  const elTeamRadios = $("teamRadios");
+  const elTable = $("table");
+  const elRowCount = $("rowCount");
+
+  const elGanttMount = $("ganttMount");
+  const elMetricsMount = $("metricsMount");
+
+  const HAS_DASHBOARD = !!(elGanttMount && elMetricsMount);
+
+  // ---------- helpers ----------
+  function setStatus(msg, kind){
+    if(!elStatus){
+      // Avoid crashing on pages without status pill.
+      if(kind === "warn") console.warn(msg);
+      else console.log(msg);
+      return;
+    }
+    elStatus.textContent = msg;
+    elStatus.style.color = "";
+    if(kind === "ok") elStatus.style.color = "var(--ok)";
+    if(kind === "warn") elStatus.style.color = "var(--warn)";
+  }
+
   function normalizeKey(k){
-    return String(k||"")
-      .replace(/^\uFEFF/, "")
-      .trim()
-      .toLowerCase()
-      .replace(/[\s_-]+/g,"");
+    return String(k||"").replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s_-]+/g,"");
   }
 
   function buildHeaderIndex(headers){
     const idx={};
-    for(const h of headers){
-      idx[normalizeKey(h)] = h;
-    }
+    for(const h of headers) idx[normalizeKey(h)] = h;
     return idx;
   }
 
@@ -77,48 +105,55 @@ function startApp(){
 
   function uniq(arr){ return Array.from(new Set(arr)); }
 
+  function escapeHtml(s){
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+      .replace(/\"/g,"&quot;").replace(/'/g,"&#039;");
+  }
+
   function isNoData(v){
-    if(v == null) return true;
-    const s = String(v).trim();
+    const s = String(v ?? "").trim().toLowerCase();
     if(!s) return true;
-    const low = s.toLowerCase();
-    return ["no data","nodata","n/a","na","-","—","/"].includes(low);
+    return (
+      s === "no data" || s === "no-data" || s === "nodata" ||
+      s === "no data." || s === "no data " ||
+      s === "na" || s === "n/a" || s === "-" || s === "null"
+    );
   }
 
-  function isOutOfScope(v){
-    if(v == null) return true;
-    const s = String(v).trim().toLowerCase();
-    if(!s) return true;
-    if(s.includes("not in scope") || s.includes("notinscope")) return true;
-    return false;
+  function isNotInScope(v){
+    const s = String(v ?? "").trim().toLowerCase();
+    return s === "not in scope" || s === "out of scope";
   }
 
-  function toMaybeNumber(v){
-    if(isNoData(v)) return null;
-    if(typeof v === "number" && Number.isFinite(v)) return v;
+  function toNumberOrNull(v){
+    if(v == null) return null;
     const s = String(v).trim();
     if(!s) return null;
+    if(isNoData(s)) return null;
 
-    // If it contains letters, treat as non-numeric (prevents date-like strings)
-    if(/[a-zA-Z]/.test(s)) return null;
+    // preserve numeric 0
+    if(typeof v === "number" && Number.isFinite(v)) return v;
 
-    const cleaned = s.replace(/,/g, "").replace(/[^0-9.\-]/g, "");
+    const cleaned = s.replace(/,/g,"").replace(/[^0-9.\-]/g,"");
     if(!cleaned) return null;
     const n = Number(cleaned);
     return Number.isFinite(n) ? n : null;
   }
 
-  function toMaybePercent(v){
-    if(isNoData(v)) return null;
+  function toPercentOrNull(v){
+    if(v == null) return null;
     if(typeof v === "number" && Number.isFinite(v)){
       if(v > 0 && v <= 1) return v * 100;
       return v;
     }
     const s = String(v).trim();
     if(!s) return null;
+    if(isNoData(s)) return null;
+
     const hasPct = s.includes("%");
-    const n = toMaybeNumber(s.replace(/%/g, ""));
+    const n = toNumberOrNull(s);
     if(n == null) return null;
+
     if(hasPct) return n;
     if(n > 0 && n <= 1) return n * 100;
     return n;
@@ -127,151 +162,149 @@ function startApp(){
   function clamp(n,a,b){ return Math.max(a, Math.min(b,n)); }
 
   function parseDate(v){
-    if(isNoData(v)) return null;
+    if(v==null) return null;
     if(v instanceof Date && !isNaN(v)) return v;
 
-    // Excel serial
     if(typeof v === "number" && Number.isFinite(v)){
       const epoch = new Date(Date.UTC(1899, 11, 30));
       const d = new Date(epoch.getTime() + v * 86400000);
-      return isNaN(d) ? null : d;
+      return isNaN(d)?null:d;
     }
 
-    const s = String(v).trim();
-    if(!s) return null;
+    const s=String(v).trim();
+    if(!s || isNoData(s)) return null;
 
-    // dd-MMM-yy or dd-MMM-yyyy (e.g., 01-Mar-21)
-    const m = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/);
-    if(m){
-      const dd = Number(m[1]);
-      const mon = m[2].toLowerCase();
-      let yy = Number(m[3]);
-      if(yy < 100) yy += 2000;
-      const monthMap = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
-      if(monthMap[mon] == null) return null;
-      const d = new Date(yy, monthMap[mon], dd);
-      return isNaN(d) ? null : d;
-    }
-
-    // dd/mm/yyyy or dd-mm-yyyy
+    // dd-mm-yy / dd/mm/yy / dd.mm.yy
     const m2=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
     if(m2){
-      let dd=+m2[1], mm=+m2[2]-1, yy=+m2[3]; if(yy<100) yy+=2000;
+      let dd=+m2[1], mm=+m2[2]-1, yy=+m2[3];
+      if(yy<100) yy+=2000;
       const d=new Date(yy,mm,dd);
       return isNaN(d)?null:d;
     }
 
-    // ISO-ish / fallback
-    const d = new Date(s);
-    return isNaN(d) ? null : d;
+    const d=new Date(s);
+    return isNaN(d)?null:d;
   }
 
   function daysBetween(a,b){ return Math.round((b-a)/86400000); }
 
-  function escapeHtml(s){
-    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
-      .replace(/\"/g,"&quot;").replace(/'/g,"&#039;");
-  }
-
-  function displayTeam(t){ return t ? t : TEAM_UNSPEC; }
-  function normalizeTeamSelectionValue(v){ return (v === TEAM_UNSPEC) ? TEAM_BLANK_SENTINEL : v; }
-  function matchTeam(rowTeam, activeTeam){
-    const rt = String(rowTeam || "").trim().toLowerCase();
-    if(activeTeam === TEAM_BLANK_SENTINEL) return rt === "";
-    return rt === String(activeTeam||"").trim().toLowerCase();
-  }
-
   function disciplineForStage(stage){
-    if(DISCIPLINE.Architecture.has(stage)) return "Architecture";
     if(DISCIPLINE.Interior.has(stage)) return "Interior";
     if(DISCIPLINE.Landscape.has(stage)) return "Landscape";
     return "Architecture";
   }
 
-  // Deployment parsing: keep ABSOLUTE percentages exactly as written
-  function parseDeploymentCell(v){
-    if(isNoData(v)) return [];
-    const s=String(v||"").trim();
-    if(!s) return [];
-
-    return s.split(",")
-      .map(p=>p.trim())
-      .filter(Boolean)
-      .map(part=>{
-        const m=part.match(/^(.*?)\s*\(\s*([0-9]+(?:\.[0-9]+)?)\s*%?\s*\)\s*$/);
-        if(m) return { name:(m[1].trim()||"(Blank)"), pct:Number(m[2]) };
-        return { name:part, pct:0 };
-      });
-  }
-
-  // ---- stage schema (new structure)
+  // --------- new per-stage schema (your new CSV structure) ----------
   function stageSchema(stageCode){
     return {
       start: [
-        `${stageCode} Start date`, `${stageCode} Start Date`,
-        `${stageCode} Start`, `${stageCode} Begin`, `${stageCode} StartDate`
+        `${stageCode} Start date`,
+        `${stageCode} Start Date`,
+        `${stageCode} Start`
       ],
-      plannedEnd: [
-        `${stageCode} Planned End date`, `${stageCode} Planned End Date`,
-        `${stageCode} End date`, `${stageCode} End Date`,
-        `${stageCode} End`, `${stageCode} Finish`, `${stageCode} EndDate`
+      end: [
+        `${stageCode} Planned End date`,
+        `${stageCode} Planned End Date`,
+        `${stageCode} Planned End`,
+        `${stageCode} End date`,
+        `${stageCode} End Date`,
+        `${stageCode} End`
       ],
       extEnd: [
-        `${stageCode} Ext end date`, `${stageCode} Ext End date`, `${stageCode} Ext End Date`,
-        `${stageCode} Extension end date`, `${stageCode} Extended End date`, `${stageCode} Extended End Date`
+        `${stageCode} Ext end date`,
+        `${stageCode} Ext End date`,
+        `${stageCode} Ext End Date`
       ],
       deliverables: [
-        `${stageCode} Deliverables`, `${stageCode} Deliverable`
+        `${stageCode} Deliverables`,
+        `${stageCode} Deliverable`
       ],
       allocated: [
-        `${stageCode} Allocated`, `${stageCode} Allocated hours`, `${stageCode} Allocated Hours`
+        `${stageCode} Allocated`,
+        `${stageCode} Allotted`,
+        `${stageCode} Allotted Hours`
       ],
       consumed: [
-        `${stageCode} Consumed`, `${stageCode} Consumed hours`, `${stageCode} Consumed Hours`
+        `${stageCode} Consumed`,
+        `${stageCode} Total Consumed`,
+        `${stageCode} TCH`
       ],
-      status: [
-        `${stageCode} Status Progress`, `${stageCode} Status`, `${stageCode} Stage Status`
+      statusProgress: [
+        `${stageCode} Status Progress`,
+        `${stageCode} Stage Status Progress`,
+        `${stageCode} Progress`
       ]
     };
   }
 
-  function isStageComplete(statusText, stagePP){
-    const s = String(statusText || "").trim().toLowerCase();
-    if(s.includes("complete") || s === "done" || s === "completed") return true;
-    if(Number.isFinite(stagePP) && stagePP >= 100) return true;
-    if(s.includes("100%")) return true;
-    return false;
+  function parseDeploymentInfo(v){
+    // Accept both "Name (10%)" and plain "Name" (no %)
+    const s = String(v ?? "").trim();
+    if(!s || isNoData(s)) return { people: [], names: [] };
+
+    const parts = s.split(",").map(p=>p.trim()).filter(Boolean);
+    const people = [];
+    const names = [];
+
+    for(const part of parts){
+      const m = part.match(/^(.*?)\s*\(\s*([0-9]+(?:\.[0-9]+)?)\s*%?\s*\)\s*$/);
+      if(m){
+        const name = (m[1].trim() || "(Blank)");
+        const pct = Number(m[2]);
+        if(Number.isFinite(pct) && pct > 0) people.push({ name, pct });
+        else names.push(name);
+      } else {
+        names.push(part);
+      }
+    }
+
+    // Sort by pct desc
+    people.sort((a,b)=>b.pct-a.pct);
+    return { people, names: uniq(names) };
   }
 
-  function buildStagesFromBaseRow(row, today){
+  function computeRunwayFromPeopleAndBH(people, BH){
+    const bh = (BH == null) ? null : Number(BH);
+    const factorDecimal = (people || []).reduce((s,p)=>s + (Number(p.pct||0)/100), 0);
+    const monthlyBurn = factorDecimal * 174.25;
+
+    if(bh == null) return { runwayMonths: null, runwayDate: null, factorDecimal, monthlyBurn };
+    if(!Number.isFinite(monthlyBurn) || monthlyBurn <= 0) return { runwayMonths: null, runwayDate: null, factorDecimal, monthlyBurn };
+    if(!Number.isFinite(bh) || bh <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
+
+    const runwayMonths = bh / monthlyBurn;
+    if(!Number.isFinite(runwayMonths) || runwayMonths <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
+
+    const today = new Date();
+    const days = runwayMonths * 30.4375;
+    const runwayDate = new Date(today.getTime() + days * 86400000);
+
+    return { runwayMonths, runwayDate, factorDecimal, monthlyBurn };
+  }
+
+  function buildStagesFromProjectRow(row, today){
+    if(!row) return [];
+
     return STAGES.map(st=>{
       const sch = stageSchema(st);
 
-      const startDates = getAllValues(row, sch.start).map(parseDate).filter(Boolean);
-      const endDates = getAllValues(row, sch.plannedEnd).map(parseDate).filter(Boolean);
-      const extDates = getAllValues(row, sch.extEnd).map(parseDate).filter(Boolean);
+      const start = parseDate(pick(row, sch.start));
+      const end = parseDate(pick(row, sch.end));
+      const extEnd = parseDate(pick(row, sch.extEnd));
 
-      const start = startDates.length ? new Date(Math.min(...startDates.map(d=>d.getTime()))) : null;
-      const end = endDates.length ? new Date(Math.max(...endDates.map(d=>d.getTime()))) : null;
-      const extEnd = extDates.length ? new Date(Math.max(...extDates.map(d=>d.getTime()))) : null;
+      const del = toNumberOrNull(pick(row, sch.deliverables));
+      const alloc = toNumberOrNull(pick(row, sch.allocated));
+      const cons = toNumberOrNull(pick(row, sch.consumed));
 
-      const delRaw = pick(row, sch.deliverables);
-      const deliverables = toMaybeNumber(delRaw);
+      const ppRaw = pick(row, sch.statusProgress);
+      const pp = toPercentOrNull(ppRaw);
+      const stagePP = (pp == null) ? null : clamp(pp, 0, 100);
 
-      const allocated = toMaybeNumber(pick(row, sch.allocated));
-      const consumed = toMaybeNumber(pick(row, sch.consumed));
-
-      const statusRaw = pick(row, sch.status);
-      const statusText = isNoData(statusRaw) ? null : String(statusRaw).trim();
-
-      const stagePP = (()=>{
-        const p = toMaybePercent(statusRaw);
-        return (p == null) ? null : clamp(p, 0, 100);
-      })();
-
-      const done = isStageComplete(statusText, stagePP);
-
+      // Alert logic (based on dates and completion)
       const alert = { kind:"", text:"" };
+      const done = (stagePP != null && stagePP >= 100);
+
       if(done){
         alert.kind = "ok";
         alert.text = "Complete";
@@ -296,295 +329,31 @@ function startApp(){
       return {
         label: st,
         discipline: disciplineForStage(st),
+
         start,
         end,
         extEnd,
-        deliverables,
-        allocated,
-        consumed,
-        statusText,
-        done,
+
+        // New fields
+        deliverables: del,
+        allocated: alloc,
+        consumed: cons,
+
+        // Use Status Progress as stage %; keep raw text for display if needed
+        statusText: (ppRaw == null || String(ppRaw).trim() === "" || isNoData(ppRaw)) ? "" : String(ppRaw).trim(),
         stagePP,
+
+        done,
         alert
       };
     });
   }
 
-  // ---- project metrics
-  function computeProjectHoursFromRow(row){
-    const AH = toMaybeNumber(pick(row, FIELDS.allottedHours));
-    const TCH = toMaybeNumber(pick(row, FIELDS.consumedHours));
-    let BH = toMaybeNumber(pick(row, FIELDS.balanceHours));
-    if(BH == null && AH != null && TCH != null) BH = AH - TCH;
-    return { AH, TCH, BH };
-  }
-
-  function computeProjectPPFromRow(row){
-    const p = toMaybePercent(pick(row, FIELDS.progress));
-    return (p == null) ? null : clamp(p, 0, 100);
-  }
-
-  function computeDeploymentPeopleFromRow(row){
-    const m = new Map();
-    const cell = pick(row, FIELDS.deployment);
-    for(const item of parseDeploymentCell(cell)){
-      const name = String(item.name||"").trim() || "(Blank)";
-      const pct = Number.isFinite(item.pct) ? item.pct : 0;
-      if(pct <= 0) continue;
-      m.set(name, (m.get(name)||0) + pct);
-    }
-
-    return Array.from(m.entries())
-      .map(([name,pct])=>({name,pct}))
-      .sort((a,b)=>b.pct-a.pct);
-  }
-
-  function computeRunwayFromPeopleAndBH(people, BH){
-    const factorDecimal = (people || []).reduce((s,p)=>s + (Number(p.pct||0)/100), 0);
-    const monthlyBurn = factorDecimal * 174.25;
-
-    if(!Number.isFinite(monthlyBurn) || monthlyBurn <= 0) return { runwayMonths: null, runwayDate: null, factorDecimal, monthlyBurn };
-    if(!Number.isFinite(BH) || BH == null || BH <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
-
-    const runwayMonths = BH / monthlyBurn;
-    if(!Number.isFinite(runwayMonths) || runwayMonths <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
-
-    const now = new Date();
-    const days = runwayMonths * 30.4375;
-    const runwayDate = new Date(now.getTime() + days * 86400000);
-
-    return { runwayMonths, runwayDate, factorDecimal, monthlyBurn };
-  }
-
-  // ---- DOM (guarded for multi-page setups)
-  const elFile = document.getElementById("file");
-  const elStatus = document.getElementById("status");
-  const elProjectSelect = document.getElementById("projectSelect");
-  const elSearch = document.getElementById("search");
-  const elTeamTypeRadios = document.getElementById("teamTypeRadios");
-  const elTeamRadios = document.getElementById("teamRadios");
-  const elTable = document.getElementById("table");
-  const elRowCount = document.getElementById("rowCount");
-
-  const ganttMount = document.getElementById("ganttMount");
-  const metricsMount = document.getElementById("metricsMount");
-
-  // If this page doesn't have the dashboard elements, exit gracefully.
-  if(!ganttMount || !metricsMount || !elProjectSelect || !elTeamTypeRadios || !elTeamRadios){
-    return;
-  }
-
-  function setStatus(msg, kind){
-    if(!elStatus) return;
-    elStatus.textContent = msg;
-    elStatus.style.color = "";
-    if(kind === "ok") elStatus.style.color = "var(--ok)";
-    if(kind === "warn") elStatus.style.color = "var(--warn)";
-  }
-
-  function renderRadioRow(el, values, activeValue, onPick){
-    if(!el) return;
-    el.innerHTML = "";
-    const list = ["", ...(values||[])];
-    for(const v of list){
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "radioBtn" + ((v===activeValue) ? " active" : "");
-      b.textContent = v ? v : "All";
-      b.dataset.value = v;
-      b.onclick = ()=> onPick(v);
-      el.appendChild(b);
-    }
-  }
-
-  function setActiveRadio(el, activeValue){
-    if(!el) return;
-    for(const b of el.querySelectorAll(".radioBtn")){
-      b.classList.toggle("active", b.dataset.value === activeValue);
-    }
-  }
-
-  function renderTable(rows){
-    if(!elTable) return;
-    if(!rows.length){
-      elTable.innerHTML = `<tr><td class="note">No rows to display.</td></tr>`;
-      return;
-    }
-    const cols = Object.keys(rows[0]).filter(k => k !== "__keyMap");
-    const thead = `<thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>`;
-    const tbody = `<tbody>${rows.slice(0, 400).map(r =>
-      `<tr>${cols.map(c => `<td>${escapeHtml(String(r[c] ?? ""))}</td>`).join("")}</tr>`
-    ).join("")}</tbody>`;
-    elTable.innerHTML = thead + tbody;
-  }
-
-  // ---- discover discipline columns
-  function discoverTeamTypeColumns(headers){
-    const normHeaders = headers.map(h => ({ raw:h, n:normalizeKey(h) }));
-    function firstMatch(predicate){
-      const hit = normHeaders.find(predicate);
-      return hit ? hit.raw : null;
-    }
-    const arch = firstMatch(h => h.n === "architecture" || h.n.includes("architecture") || h.n === "arch");
-    const interior = firstMatch(h => h.n === "interior" || h.n.includes("interior") || h.n.includes("interiors"));
-    const landscape = firstMatch(h => h.n === "landscape" || h.n.includes("landscape") || h.n.includes("landacpe") || h.n === "landacpe");
-    return { Architecture: arch, Interior: interior, Landscape: landscape };
-  }
-
-  // ---- app state
-  let baseRows = [];            // as parsed (1 per project in your new structure)
-  let derivedRowsAll = [];      // cloned per-discipline rows for filtering
-  let derivedFiltered = [];
-
-  let baseRowByPC = new Map();
-  let projectNameMap = new Map();
-  let typeCols = { Architecture:null, Interior:null, Landscape:null };
-
-  let activeTeamType = "";
-  let activeTeam = "";
-  let activeProject = "";
-  let runwayDate = null;
-
-  // ---- modules
-  const gantt = initGantt(ganttMount, {
-    fmtWindow: (a,b)=> `${fmtMonthYear(a)} → ${fmtMonthYear(b)}`
-  });
-
-  const metrics = initMetrics(metricsMount, {
-    onRunwaySimulated: (sim)=>{
-      runwayDate = sim?.runwayDate || null;
-      gantt.setRunway(runwayDate);
-    }
-  });
-
-  // ---- project name map
-  function buildProjectNameMapFromBaseRows(rows){
-    projectNameMap = new Map();
-    for(const r of rows){
-      const pc = String(pick(r, FIELDS.projectCode) || "").trim();
-      const pn = String(pick(r, FIELDS.projectName) || "").trim();
-      if(pc && pn && !projectNameMap.has(pc)) projectNameMap.set(pc, pn);
-    }
-  }
-
-  function initProjectDropdownFromDerivedRows(rows){
-    if(!elProjectSelect) return;
-
-    const codes = uniq((rows||[])
-      .map(r=>String(pick(r,FIELDS.projectCode)||"").trim())
-      .filter(Boolean))
-      .sort((a,b)=>a.localeCompare(b));
-
-    const prev = activeProject || "";
-    elProjectSelect.innerHTML = `<option value="">Select a project…</option>` +
-      codes.map(pc=>{
-        const pn = projectNameMap.get(pc) || "";
-        const label = pn ? `${pc} — ${pn}` : pc;
-        return `<option value="${escapeHtml(pc)}">${escapeHtml(label)}</option>`;
-      }).join("");
-
-    if(prev && codes.includes(prev)) activeProject = prev;
-    else activeProject = codes[0] || "";
-
-    elProjectSelect.value = activeProject || "";
-    elProjectSelect.disabled = codes.length === 0;
-    if(elSearch) elSearch.disabled = codes.length === 0;
-  }
-
-  function getTeamsForSelectedType(){
-    const teams = derivedRowsAll
-      .filter(r => !activeTeamType || String(r.__teamType||"") === activeTeamType)
-      .map(r => displayTeam(String(r.__team || "").trim()))
-      .filter(Boolean);
-
-    return uniq(teams).sort((a,b)=>a.localeCompare(b));
-  }
-
-  function rowMatchesTeamType(r){
-    if(!activeTeamType) return true;
-    return String(r.__teamType || "") === activeTeamType;
-  }
-
-  function rowMatchesTeam(r){
-    if(!activeTeam) return true;
-    return matchTeam(r.__team || "", activeTeam);
-  }
-
-  function applyFilters(){
-    derivedFiltered = derivedRowsAll.filter(r => rowMatchesTeamType(r) && rowMatchesTeam(r));
-
-    buildProjectNameMapFromBaseRows(baseRows);
-    initProjectDropdownFromDerivedRows(derivedFiltered);
-
-    renderAll();
-  }
-
-  function setTeamType(v){
-    activeTeamType = v || "";
-    setActiveRadio(elTeamTypeRadios, activeTeamType);
-
-    activeTeam = "";
-    setActiveRadio(elTeamRadios, "");
-
-    const teams = getTeamsForSelectedType();
-    renderRadioRow(elTeamRadios, teams, "", (vv)=> setTeam(vv));
-
-    applyFilters();
-  }
-
-  function setTeam(v){
-    activeTeam = normalizeTeamSelectionValue(v || "");
-    setActiveRadio(elTeamRadios, v || "");
-    applyFilters();
-  }
-
-  function fmtMonthYear(d){
-    const mm = String(d.getMonth()+1).padStart(2,"0");
-    const yy = d.getFullYear();
-    return `${mm}/${yy}`;
-  }
-
-  function renderAll(){
-    const query = (elSearch?.value || "").trim().toLowerCase();
-    activeProject = elProjectSelect.value || "";
-
-    const rowsForTable = derivedFiltered.filter(row=>{
-      if(activeProject){
-        const code=String(pick(row,FIELDS.projectCode)||"").trim();
-        if(code !== activeProject) return false;
-      }
-      if(!query) return true;
-      return JSON.stringify(row).toLowerCase().includes(query);
-    });
-
-    if(elRowCount) elRowCount.textContent = `${rowsForTable.length} rows`;
-    renderTable(rowsForTable);
-
-    const today = new Date();
-    const baseRow = activeProject ? (baseRowByPC.get(activeProject) || null) : null;
-
-    const projectName = baseRow ? (String(pick(baseRow, FIELDS.projectName)||"").trim()) : "";
-    const title = activeProject ? (projectName ? `${activeProject} — ${projectName}` : activeProject) : "Select a project";
-
-    const stages = baseRow ? buildStagesFromBaseRow(baseRow, today) : [];
-    const projectPP = baseRow ? computeProjectPPFromRow(baseRow) : null;
-    const hours = baseRow ? computeProjectHoursFromRow(baseRow) : { AH:null, TCH:null, BH:null };
-    const people = baseRow ? computeDeploymentPeopleFromRow(baseRow) : [];
-
-    const runway = computeRunwayFromPeopleAndBH(people, hours?.BH);
-    runwayDate = runway.runwayDate || null;
-
-    gantt.setData({ title, projectPP, stages, runwayDate });
-    metrics.setData({ title, hours, people, runway });
-
-    gantt.setRunway(runwayDate);
-  }
-
-  // ---- parsing
+  // ---------- CSV parsing ----------
   function detectDelimiter(text){
     const sample = (text || "").replace(/^\uFEFF/, "");
     const line = sample.split(/\r?\n/).find(l => l.trim() !== "") || "";
-    const stripped = line.replace(/\"([^\"]|\"\")*\"/g, "");
+    const stripped = line.replace(/"([^"]|"")*"/g, "");
     const delims = [",",";","\t","|"];
     let best = ",", bestCount = -1;
     for(const d of delims){
@@ -607,7 +376,7 @@ function startApp(){
         if(ch === '"') inQuotes=true;
         else if(ch === delimiter){ row.push(cur); cur=""; }
         else if(ch === "\n"){ row.push(cur); rows.push(row); row=[]; cur=""; }
-        else if(ch === "\r"){ }
+        else if(ch === "\r"){ /* ignore */ }
         else cur+=ch;
       }
     }
@@ -621,7 +390,6 @@ function startApp(){
       const s = String(h??"").replace(/^\uFEFF/, "").trim();
       return s || `Column ${i+1}`;
     });
-
     const objects=[];
     for(let r=1;r<matrix.length;r++){
       const line=matrix[r]||[];
@@ -634,65 +402,240 @@ function startApp(){
     return { headers, objects };
   }
 
-  function rowCompletenessScore(row){
-    let n = 0;
-    for(const k of Object.keys(row)){
-      if(k === "__keyMap") continue;
-      if(!isNoData(row[k])) n++;
-    }
-    return n;
+  function getProjectFromUrl(){
+    try{
+      const u = new URL(location.href);
+      return u.searchParams.get("project") || u.searchParams.get("pc") || u.searchParams.get("code") || "";
+    } catch { return ""; }
   }
 
-  function buildBaseRowMaps(rows){
-    baseRowByPC = new Map();
-    for(const r of rows){
-      const pc = String(pick(r, FIELDS.projectCode) || "").trim();
-      if(!pc) continue;
-      if(!baseRowByPC.has(pc)){
-        baseRowByPC.set(pc, r);
-      } else {
-        const cur = baseRowByPC.get(pc);
-        if(rowCompletenessScore(r) > rowCompletenessScore(cur)) baseRowByPC.set(pc, r);
-      }
+  // ---------- UI helpers (guarded) ----------
+  function renderTable(rows){
+    if(!elTable) return;
+    if (!rows.length){
+      elTable.innerHTML = `<tr><td class="note">No rows to display.</td></tr>`;
+      return;
+    }
+    const cols = Object.keys(rows[0]).filter(k => k !== "__keyMap");
+    const thead = `<thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>`;
+    const tbody = `<tbody>${rows.slice(0, 400).map(r =>
+      `<tr>${cols.map(c => `<td>${escapeHtml(String(r[c] ?? ""))}</td>`).join("")}</tr>`
+    ).join("")}</tbody>`;
+    elTable.innerHTML = thead + tbody;
+  }
+
+  function renderRadioRow(el, values, activeValue, onPick){
+    if(!el) return;
+    el.innerHTML = "";
+    const list = ["", ...(values||[])];
+    for(const v of list){
+      const b = document.createElement("button");
+      b.type="button";
+      b.className = "radioBtn" + ((v===activeValue) ? " active" : "");
+      b.textContent = v ? v : "All";
+      b.dataset.value = v;
+      b.onclick = ()=> onPick(v);
+      el.appendChild(b);
     }
   }
 
-  function buildDerivedRowsForFilters(rows){
-    const out=[];
-    for(const r of rows){
-      const pc = String(pick(r, FIELDS.projectCode) || "").trim();
+  function setActiveRadio(el, activeValue){
+    if(!el) return;
+    for(const b of el.querySelectorAll(".radioBtn")){
+      b.classList.toggle("active", b.dataset.value === activeValue);
+    }
+  }
 
-      let pushed = 0;
+  // ---------- state ----------
+  let projectRowsRaw = [];           // original CSV rows
+  let projectRowByCode = new Map();  // pc -> original row
+  let viewRows = [];                // expanded rows for filtering (team+discipline)
+  let filteredRows = [];            // filtered view rows (for table + project list)
+
+  let activeTeamType = "";
+  let activeTeam = "";
+  let activeProject = "";
+
+  // ---------- building filter view rows ----------
+  function parseTeamNames(cell){
+    const s = String(cell ?? "").trim();
+    if(!s || isNoData(s) || isNotInScope(s)) return [];
+    return s.split(",").map(x=>x.trim()).filter(Boolean);
+  }
+
+  function buildViewRows(headers, objects){
+    const keyMap = buildHeaderIndex(headers);
+
+    projectRowsRaw = objects.map(o => ({ ...o, __keyMap: keyMap }));
+    projectRowByCode = new Map();
+    viewRows = [];
+
+    for(const row of projectRowsRaw){
+      const pc = String(pick(row, FIELDS.projectCode) || "").trim();
+      if(pc && !projectRowByCode.has(pc)) projectRowByCode.set(pc, row);
+
+      // Expand by discipline + each name in that discipline cell
       for(const type of TEAM_TYPES_FIXED){
-        const col = typeCols?.[type] || type;
-        if(!col) continue;
-        const raw = r[col];
-        if(isOutOfScope(raw) || isNoData(raw)) continue;
-        const team = String(raw).trim();
-        if(!team) continue;
-        out.push({ ...r, __teamType:type, __team:team, __pc:pc });
-        pushed++;
-      }
-
-      // If nothing is in-scope, keep a single fallback row so the project still appears under "All".
-      if(pushed === 0){
-        out.push({ ...r, __teamType:"", __team:"", __pc:pc });
+        const names = parseTeamNames(row[type]); // columns are literally Architecture/Interior/Landscape
+        if(names.length){
+          for(const n of names){
+            viewRows.push({ ...row, __teamType:type, __team:n, __pc:pc });
+          }
+        } else {
+          // keep an "unspecified" row for discipline (helps filtering to Unspecified)
+          viewRows.push({ ...row, __teamType:type, __team:"", __pc:pc });
+        }
       }
     }
-    return out;
   }
 
+  function displayTeam(t){ return t ? t : TEAM_UNSPEC; }
+  function normalizeTeamSelectionValue(v){ return (v === TEAM_UNSPEC) ? TEAM_BLANK_SENTINEL : v; }
+  function matchTeam(rowTeam, active){
+    const rt = String(rowTeam || "").trim().toLowerCase();
+    if(active === TEAM_BLANK_SENTINEL) return rt === "";
+    return rt === String(active||"").trim().toLowerCase();
+  }
+
+  function rowMatchesTeamType(r){
+    if(!activeTeamType) return true;
+    return String(r.__teamType || "").toLowerCase() === String(activeTeamType).toLowerCase();
+  }
+  function rowMatchesTeam(r){
+    if(!activeTeam) return true;
+    return matchTeam(r.__team || "", activeTeam);
+  }
+
+  function getTeamsForSelectedType(){
+    const teams = viewRows
+      .filter(r => rowMatchesTeamType(r))
+      .map(r => displayTeam(String(r.__team || "").trim()))
+      .filter(Boolean);
+    return uniq(teams).sort((a,b)=>a.localeCompare(b));
+  }
+
+  function initProjectDropdownFromFiltered(){
+    const codes = uniq(filteredRows
+      .map(r=>String(r.__pc || "").trim())
+      .filter(Boolean))
+      .sort((a,b)=>a.localeCompare(b));
+
+    const wanted = activeProject || getProjectFromUrl() || "";
+    const picked = (wanted && codes.includes(wanted)) ? wanted : (codes[0] || "");
+
+    activeProject = picked;
+
+    if(elProjectSelect){
+      elProjectSelect.innerHTML =
+        `<option value="">Select a project…</option>` +
+        codes.map(pc=>{
+          const base = projectRowByCode.get(pc);
+          const pn = base ? String(pick(base, FIELDS.projectName) || "").trim() : "";
+          const label = pn ? `${pc} — ${pn}` : pc;
+          return `<option value="${escapeHtml(pc)}">${escapeHtml(label)}</option>`;
+        }).join("");
+
+      elProjectSelect.value = activeProject || "";
+      elProjectSelect.disabled = codes.length === 0;
+    }
+
+    if(elSearch) elSearch.disabled = codes.length === 0;
+  }
+
+  function applyFilters(){
+    filteredRows = viewRows.filter(r => rowMatchesTeamType(r) && rowMatchesTeam(r));
+
+    initProjectDropdownFromFiltered();
+    renderAll();
+  }
+
+  function setTeamType(v){
+    activeTeamType = v || "";
+    setActiveRadio(elTeamTypeRadios, activeTeamType);
+
+    activeTeam = "";
+    setActiveRadio(elTeamRadios, "");
+
+    renderRadioRow(elTeamRadios, getTeamsForSelectedType(), "", (vv)=> setTeam(vv));
+    applyFilters();
+  }
+
+  function setTeam(v){
+    activeTeam = normalizeTeamSelectionValue(v || "");
+    setActiveRadio(elTeamRadios, v || "");
+    applyFilters();
+  }
+
+  // ---------- modules ----------
+  function fmtMonthYear(d){
+    const mm = String(d.getMonth()+1).padStart(2,"0");
+    const yy = d.getFullYear();
+    return `${mm}/${yy}`;
+  }
+
+  const gantt = HAS_DASHBOARD ? initGantt(elGanttMount, {
+    fmtWindow: (a,b)=> `${fmtMonthYear(a)} → ${fmtMonthYear(b)}`
+  }) : null;
+
+  const metrics = HAS_DASHBOARD ? initMetrics(elMetricsMount, {
+    onRunwaySimulated: (sim)=> gantt?.setRunway(sim?.runwayDate || null)
+  }) : null;
+
+  // ---------- render ----------
+  function renderAll(){
+    if(elProjectSelect) activeProject = elProjectSelect.value || activeProject || "";
+    const query = elSearch ? elSearch.value.trim().toLowerCase() : "";
+
+    // filter rows for raw table (uses view rows)
+    let tableRows = filteredRows;
+    if(activeProject){
+      tableRows = tableRows.filter(r => String(r.__pc||"").trim() === String(activeProject).trim());
+    }
+    if(query){
+      tableRows = tableRows.filter(r => JSON.stringify(r).toLowerCase().includes(query));
+    }
+
+    if(elRowCount) elRowCount.textContent = `${tableRows.length} rows`;
+    renderTable(tableRows);
+
+    if(!HAS_DASHBOARD) return;
+
+    const baseRow = projectRowByCode.get(activeProject) || (tableRows[0] || null);
+    const projectName = baseRow ? String(pick(baseRow, FIELDS.projectName) || "").trim() : "";
+    const title = activeProject ? (projectName ? `${activeProject} — ${projectName}` : activeProject) : "Select a project";
+
+    const projectPPraw = baseRow ? pick(baseRow, FIELDS.progress) : null;
+    const projectPP = (() => {
+      const pp = toPercentOrNull(projectPPraw);
+      return (pp == null) ? null : clamp(pp, 0, 100);
+    })();
+
+    const AH = baseRow ? toNumberOrNull(pick(baseRow, FIELDS.allottedHours)) : null;
+    const TCH = baseRow ? toNumberOrNull(pick(baseRow, FIELDS.consumedHours)) : null;
+    const BH = baseRow ? toNumberOrNull(pick(baseRow, FIELDS.balanceHours)) : null;
+
+    const hours = { AH, TCH, BH };
+
+    const depRaw = baseRow ? pick(baseRow, FIELDS.deployment) : null;
+    const dep = parseDeploymentInfo(depRaw);
+
+    const runway = computeRunwayFromPeopleAndBH(dep.people, BH);
+    const runwayDate = runway?.runwayDate || null;
+
+    const today = new Date();
+    const stages = baseRow ? buildStagesFromProjectRow(baseRow, today) : [];
+
+    gantt?.setData({ title, projectPP, stages, runwayDate });
+    metrics?.setData({ title, hours, people: dep.people, deploymentNames: dep.names, runway });
+    gantt?.setRunway(runwayDate);
+  }
+
+  // ---------- import ----------
   async function importFile(file){
     const name=(file?.name||"").toLowerCase();
     setStatus("Loading…");
 
-    baseRows=[]; derivedRowsAll=[]; derivedFiltered=[];
-    baseRowByPC = new Map();
-    projectNameMap = new Map();
-
-    activeTeamType=""; activeTeam=""; activeProject="";
-    runwayDate = null;
-
+    // reset UI safely
     if(elProjectSelect){
       elProjectSelect.innerHTML = `<option value="">Select a project…</option>`;
       elProjectSelect.disabled = true;
@@ -706,33 +649,38 @@ function startApp(){
     if(elTable) elTable.innerHTML = "";
     if(elRowCount) elRowCount.textContent = "0 rows";
 
+    projectRowsRaw = [];
+    projectRowByCode = new Map();
+    viewRows = [];
+    filteredRows = [];
+
+    activeTeamType = "";
+    activeTeam = "";
+    activeProject = "";
+
     try{
       if(name.endsWith(".csv") || name.endsWith(".tsv") || name.endsWith(".txt")){
         const text = await file.text();
         const delim = detectDelimiter(text);
         const matrix = parseDelimited(text, delim);
         const { headers, objects } = matrixToObjects(matrix);
-        const keyMap = buildHeaderIndex(headers);
 
-        typeCols = discoverTeamTypeColumns(headers);
+        buildViewRows(headers, objects);
 
-        baseRows = objects.map(o=>({ ...o, __keyMap:keyMap }));
-        buildBaseRowMaps(baseRows);
-
-        derivedRowsAll = buildDerivedRowsForFilters(baseRows);
-
+        // Render filters
         renderRadioRow(elTeamTypeRadios, TEAM_TYPES_FIXED, "", setTeamType);
-        const teamsAll = uniq(derivedRowsAll.map(r=>displayTeam(String(r.__team||"").trim()))).sort((a,b)=>a.localeCompare(b));
-        renderRadioRow(elTeamRadios, teamsAll, "", (v)=> setTeam(v));
+        renderRadioRow(elTeamRadios, uniq(viewRows.map(r=>displayTeam(r.__team))).sort((a,b)=>a.localeCompare(b)), "", (v)=> setTeam(v));
 
+        // Start with URL project (if any) and apply filters
+        activeProject = getProjectFromUrl() || "";
         applyFilters();
 
-        setStatus(`Loaded (${delim === "\t" ? "TAB" : delim} • ${baseRows.length} projects)`, "ok");
+        setStatus(`Loaded (${delim === "\t" ? "TAB" : delim} • ${projectRowsRaw.length} projects)`, "ok");
         return;
       }
 
       if(name.endsWith(".xlsx") || name.endsWith(".xls")){
-        if(typeof XLSX === "undefined") throw new Error("XLSX library not loaded (check network). ");
+        if(typeof XLSX === "undefined") throw new Error("XLSX library not loaded (check network).");
 
         const data = await file.arrayBuffer();
         const workbook = XLSX.read(data,{ type:"array", cellDates:true });
@@ -741,18 +689,13 @@ function startApp(){
         const ws = workbook.Sheets[firstSheet];
         const matrix = XLSX.utils.sheet_to_json(ws,{ header:1, defval:"", raw:false });
         const { headers, objects } = matrixToObjects(matrix);
-        const keyMap = buildHeaderIndex(headers);
 
-        typeCols = discoverTeamTypeColumns(headers);
-
-        baseRows = objects.map(o=>({ ...o, __keyMap:keyMap }));
-        buildBaseRowMaps(baseRows);
-        derivedRowsAll = buildDerivedRowsForFilters(baseRows);
+        buildViewRows(headers, objects);
 
         renderRadioRow(elTeamTypeRadios, TEAM_TYPES_FIXED, "", setTeamType);
-        const teamsAll = uniq(derivedRowsAll.map(r=>displayTeam(String(r.__team||"").trim()))).sort((a,b)=>a.localeCompare(b));
-        renderRadioRow(elTeamRadios, teamsAll, "", (v)=> setTeam(v));
+        renderRadioRow(elTeamRadios, uniq(viewRows.map(r=>displayTeam(r.__team))).sort((a,b)=>a.localeCompare(b)), "", (v)=> setTeam(v));
 
+        activeProject = getProjectFromUrl() || "";
         applyFilters();
 
         setStatus(`Imported "${file.name}" (sheet: ${firstSheet})`, "ok");
@@ -766,41 +709,47 @@ function startApp(){
     }
   }
 
-  // ---- events
+  // ---------- auto-load sheetjs.csv ----------
+  async function autoLoadDefaultCsv(){
+    // If you're opening index.html directly (file://), fetch won't work reliably.
+    if(location.protocol === "file:"){
+      setStatus(`Tip: open via a web server or GitHub Pages to auto-load sheetjs.csv`, "warn");
+      return;
+    }
+
+    try{
+      setStatus("Loading sheetjs.csv…");
+
+      const res = await fetch(DEFAULT_CSV_URL.toString(), { cache:"no-store" });
+      if(!res.ok) throw new Error(`HTTP ${res.status} (${res.statusText})`);
+
+      const blob = await res.blob();
+      const f = new File([blob], "sheetjs.csv", { type: blob.type || "text/csv" });
+
+      await importFile(f);
+      setStatus("Auto-loaded sheetjs.csv", "ok");
+    } catch(err){
+      console.warn("Auto-load failed:", err);
+      setStatus(`Auto-load failed: ${err?.message || err}`, "warn");
+    }
+  }
+
+  // ---------- events ----------
   if(elFile){
     elFile.addEventListener("change", async ()=>{
       const f = elFile.files?.[0];
       if(f) await importFile(f);
     });
   }
-  elProjectSelect.addEventListener("change", renderAll);
+  if(elProjectSelect) elProjectSelect.addEventListener("change", renderAll);
   if(elSearch) elSearch.addEventListener("input", renderAll);
 
-  // ---- auto-load sheetjs.csv (GitHub Pages)
-  async function autoLoadDefaultCsv(){
-    try{
-      const url = new URL("./sheetjs.csv", import.meta.url);
-      setStatus("Auto-loading sheetjs.csv…");
-
-      const res = await fetch(url.toString(), { cache:"no-store" });
-      if(!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const blob = await res.blob();
-      const file = new File([blob], "sheetjs.csv", { type: blob.type || "text/csv" });
-      await importFile(file);
-    } catch(err){
-      console.warn("Auto-load failed:", err);
-      // Don't overwrite status if user already loaded a file
-      if(elStatus && /No file loaded/i.test(elStatus.textContent || "")){
-        setStatus("Auto-load failed (upload a file)", "warn");
-      }
-    }
+  // Initial empty state
+  if(HAS_DASHBOARD){
+    gantt?.setData({ title:"Select a project", projectPP:null, stages:[], runwayDate:null });
+    metrics?.setData({ title:"", hours:{AH:null,TCH:null,BH:null}, people:[], deploymentNames:[], runway:null });
   }
 
-  // Initial
-  gantt.setData({ title:"Select a project", projectPP:null, stages:[], runwayDate:null });
-  metrics.setData({ title:"", hours:{AH:null,TCH:null,BH:null}, people:[], runway:null });
-  setStatus("No file loaded");
-
+  // Kick off auto-load
   autoLoadDefaultCsv();
 }
