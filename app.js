@@ -18,11 +18,12 @@ function startApp(){
   const elSearch = document.getElementById("search");
   const elTeamRadios = document.getElementById("teamRadios");
   const elProjectSelect = document.getElementById("projectSelect");
+  const elProjectStatusRadios = document.getElementById("projectStatusRadios");
 
   const DEFAULT_CSV_URL = new URL("./sheetjs.csv", import.meta.url);
   const STORAGE_KEY = "project_intel_data_v1";
 
-  // ✅ status disabled completely
+  // status UI disabled
   function setStatus(){}
 
   const STAGES = [
@@ -553,6 +554,14 @@ function startApp(){
     }
   }
 
+  // ✅ Project Status classification (Active / On hold)
+  function classifyProjectStatus(psRaw){
+    const s = String(psRaw || "").trim().toLowerCase();
+    if(!s) return "active"; // default
+    if(s.includes("hold") || s.includes("onhold") || s.includes("on hold") || s.includes("paused")) return "onhold";
+    return "active";
+  }
+
   const landing = landingMount ? initLanding(landingMount, {
     onSelectProject: (pc)=>{
       const base = new URL("./dashboard.html", location.href);
@@ -574,8 +583,12 @@ function startApp(){
 
   let allRows = [];
   let typeCols = null;
-  let activeTeam = "";
+
+  let activeTeam = ""; // "" = All teams
   let searchQuery = "";
+
+  // ✅ New: project status filter
+  let projectStatusFilter = "all"; // all | active | onhold
 
   function getTeamsAll(){
     const teams = allRows.map(r => String(r.__team || "").trim()).filter(Boolean);
@@ -602,6 +615,34 @@ function startApp(){
         renderLanding();
       };
       elTeamRadios.appendChild(b);
+    }
+  }
+
+  // ✅ New: render All / Active / On hold radios
+  function renderProjectStatusRadios(){
+    if(!elProjectStatusRadios) return;
+
+    const options = [
+      { value: "all", label: "All" },
+      { value: "active", label: "Active" },
+      { value: "onhold", label: "On hold" },
+    ];
+
+    elProjectStatusRadios.innerHTML = "";
+    for(const opt of options){
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "radioBtn" + ((opt.value === projectStatusFilter) ? " active" : "");
+      b.textContent = opt.label;
+      b.dataset.value = opt.value;
+      b.onclick = ()=>{
+        projectStatusFilter = opt.value;
+        for(const btn of elProjectStatusRadios.querySelectorAll(".radioBtn")){
+          btn.classList.toggle("active", btn.dataset.value === projectStatusFilter);
+        }
+        renderLanding();
+      };
+      elProjectStatusRadios.appendChild(b);
     }
   }
 
@@ -673,6 +714,7 @@ function startApp(){
       pc,
       name,
       ps,
+      psClass: classifyProjectStatus(ps), // ✅ used by filter
       teams,
       projectPP,
       currentStage: current ? current.label : "",
@@ -700,22 +742,31 @@ function startApp(){
     const q = (elSearch ? elSearch.value : searchQuery || "").trim().toLowerCase();
     searchQuery = q;
 
-    const filtered = allRows.filter(r=>{
-      if(activeTeam){
-        return String(r.__team || "").trim().toLowerCase() === activeTeam.trim().toLowerCase();
-      }
-      return true;
-    });
-
-    const groups = projectGroup(filtered);
+    // build project cards first (per project)
+    const groups = projectGroup(allRows);
     let cards = [];
     for(const [pc, rowsForProject] of groups.entries()){
       const card = computeProjectCard(pc, rowsForProject);
+
+      // ✅ filter by project status radios
+      if(projectStatusFilter !== "all" && card.psClass !== projectStatusFilter) continue;
+
+      // ✅ filter by team (kept)
+      if(activeTeam){
+        const anyTeamMatch = (card.teams || []).some(t =>
+          String(t.name || "").trim().toLowerCase() === activeTeam.trim().toLowerCase()
+        );
+        if(!anyTeamMatch) continue;
+      }
+
+      // ✅ search filter
       const hay = `${card.pc} ${card.name} ${card.ps} ${card.currentStage} ${card.missedStages.join(" ")}`.toLowerCase();
       if(q && !hay.includes(q)) continue;
+
       cards.push(card);
     }
 
+    // missed first, then on track
     cards.sort((a,b)=>{
       const am = a.missedCount > 0 ? 1 : 0;
       const bm = b.missedCount > 0 ? 1 : 0;
@@ -756,11 +807,9 @@ function startApp(){
     metrics.setData({ title, hours, people, runway });
   }
 
-  // ✅ Upload button triggers LOCAL file picker
+  // upload triggers local file picker
   if(elUploadBtn && elFile){
-    elUploadBtn.addEventListener("click", ()=>{
-      elFile.click();
-    });
+    elUploadBtn.addEventListener("click", ()=> elFile.click());
   }
 
   if(elSearch){
@@ -799,6 +848,7 @@ function startApp(){
         typeCols = norm.typeCols;
 
         if(mode === "landing"){
+          renderProjectStatusRadios();
           renderTeamRadios();
           renderLanding();
         } else {
@@ -808,7 +858,6 @@ function startApp(){
         console.error(err);
         setStatus("Upload failed");
       } finally {
-        // allow selecting same file again
         elFile.value = "";
       }
     });
@@ -827,6 +876,7 @@ function startApp(){
     typeCols = norm.typeCols;
 
     if(mode === "landing"){
+      renderProjectStatusRadios(); // ✅ new
       renderTeamRadios();
       renderLanding();
     } else {
