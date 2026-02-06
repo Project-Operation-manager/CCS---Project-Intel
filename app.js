@@ -23,7 +23,7 @@ function startApp(){
   const DEFAULT_CSV_URL = new URL("./sheetjs.csv", import.meta.url);
   const STORAGE_KEY = "project_intel_data_v1";
 
-  // status UI disabled
+  // ✅ status UI disabled completely
   function setStatus(){}
 
   const STAGES = [
@@ -557,7 +557,7 @@ function startApp(){
   // ✅ Project Status classification (Active / On hold)
   function classifyProjectStatus(psRaw){
     const s = String(psRaw || "").trim().toLowerCase();
-    if(!s) return "active"; // default
+    if(!s) return "active";
     if(s.includes("hold") || s.includes("onhold") || s.includes("on hold") || s.includes("paused")) return "onhold";
     return "active";
   }
@@ -584,11 +584,9 @@ function startApp(){
   let allRows = [];
   let typeCols = null;
 
-  let activeTeam = ""; // "" = All teams
+  let activeTeam = "";               // "" = All teams
   let searchQuery = "";
-
-  // ✅ New: project status filter
-  let projectStatusFilter = "all"; // all | active | onhold
+  let projectStatusFilter = "all";   // all | active | onhold
 
   function getTeamsAll(){
     const teams = allRows.map(r => String(r.__team || "").trim()).filter(Boolean);
@@ -618,7 +616,6 @@ function startApp(){
     }
   }
 
-  // ✅ New: render All / Active / On hold radios
   function renderProjectStatusRadios(){
     if(!elProjectStatusRadios) return;
 
@@ -714,7 +711,7 @@ function startApp(){
       pc,
       name,
       ps,
-      psClass: classifyProjectStatus(ps), // ✅ used by filter
+      psClass: classifyProjectStatus(ps),
       teams,
       projectPP,
       currentStage: current ? current.label : "",
@@ -742,16 +739,13 @@ function startApp(){
     const q = (elSearch ? elSearch.value : searchQuery || "").trim().toLowerCase();
     searchQuery = q;
 
-    // build project cards first (per project)
     const groups = projectGroup(allRows);
     let cards = [];
     for(const [pc, rowsForProject] of groups.entries()){
       const card = computeProjectCard(pc, rowsForProject);
 
-      // ✅ filter by project status radios
       if(projectStatusFilter !== "all" && card.psClass !== projectStatusFilter) continue;
 
-      // ✅ filter by team (kept)
       if(activeTeam){
         const anyTeamMatch = (card.teams || []).some(t =>
           String(t.name || "").trim().toLowerCase() === activeTeam.trim().toLowerCase()
@@ -759,14 +753,12 @@ function startApp(){
         if(!anyTeamMatch) continue;
       }
 
-      // ✅ search filter
       const hay = `${card.pc} ${card.name} ${card.ps} ${card.currentStage} ${card.missedStages.join(" ")}`.toLowerCase();
       if(q && !hay.includes(q)) continue;
 
       cards.push(card);
     }
 
-    // missed first, then on track
     cards.sort((a,b)=>{
       const am = a.missedCount > 0 ? 1 : 0;
       const bm = b.missedCount > 0 ? 1 : 0;
@@ -807,7 +799,7 @@ function startApp(){
     metrics.setData({ title, hours, people, runway });
   }
 
-  // upload triggers local file picker
+  // ✅ Upload button triggers LOCAL file picker
   if(elUploadBtn && elFile){
     elUploadBtn.addEventListener("click", ()=> elFile.click());
   }
@@ -876,7 +868,7 @@ function startApp(){
     typeCols = norm.typeCols;
 
     if(mode === "landing"){
-      renderProjectStatusRadios(); // ✅ new
+      renderProjectStatusRadios();
       renderTeamRadios();
       renderLanding();
     } else {
