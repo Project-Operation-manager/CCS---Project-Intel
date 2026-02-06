@@ -102,7 +102,6 @@
       pointer-events:none;
     }
 
-    /* Project + Team filters beside each other */
     .filtersRow{
       display:flex;
       gap:12px;
@@ -152,7 +151,6 @@
 
     main{ padding:14px 16px 18px; }
 
-    /* Text moved down from header */
     .pageTitle{
       margin: 0 0 10px 0;
       font-size: 22px;
@@ -174,7 +172,8 @@
   <div class="top">
     <div class="leftBrand">
       <a class="logoLink" href="./index.html" aria-label="Go to landing page">
-        <img class="logo" src="./LOGO.png" alt="Logo" />
+        <!-- src is set by app.js (robust fallback) -->
+        <img class="logo" data-logo alt="Logo" />
       </a>
     </div>
 
