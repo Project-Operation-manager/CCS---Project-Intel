@@ -21,6 +21,7 @@ function startApp(){
   const elStatus = document.getElementById("status");
   const elSearch = document.getElementById("search");
   const elTeamRadios = document.getElementById("teamRadios");
+  const elProjectSelect = document.getElementById("projectSelect");
 
   const DEFAULT_CSV_URL = new URL("./sheetjs.csv", import.meta.url);
   const STORAGE_KEY = "project_intel_data_v1"; // sessionStorage
@@ -524,7 +525,6 @@ function startApp(){
   }
 
   function serializeForStorage(headers, objects){
-    // Keep it smallish but stable
     return JSON.stringify({ headers, objects });
   }
 
@@ -556,7 +556,6 @@ function startApp(){
     const matrix = parseDelimited(text, delim);
     const { headers, objects } = matrixToObjects(matrix);
 
-    // store for dashboard page reuse
     sessionStorage.setItem(STORAGE_KEY, serializeForStorage(headers, objects));
 
     const norm = normalizeRows(headers, objects);
@@ -591,14 +590,15 @@ function startApp(){
   }
 
   async function loadData(){
-    // 1) sessionStorage (from landing upload or previous load)
+    // 1) sessionStorage
     const stored = sessionStorage.getItem(STORAGE_KEY);
     if(stored){
       try{
         const parsed = deserializeFromStorage(stored);
         if(parsed){
           const norm = normalizeRows(parsed.headers, parsed.objects);
-          setStatus(`Loaded from session (${norm.rows.length} rows)`, "ok");
+          // ✅ removed "Loaded from session" wording
+          setStatus(`Loaded (${norm.rows.length} rows)`, "ok");
           return norm;
         }
       } catch (e){
@@ -611,7 +611,7 @@ function startApp(){
       return await loadDefaultFromRepo();
     } catch (err){
       console.warn(err);
-      setStatus(`Auto-load failed: ${err?.message || err}`, "warn");
+      setStatus(`Auto-load failed`, "warn");
       return null;
     }
   }
@@ -621,7 +621,6 @@ function startApp(){
   // ------------------------------
   const landing = landingMount ? initLanding(landingMount, {
     onSelectProject: (pc)=>{
-      // Navigate to dashboard page
       const base = new URL("./dashboard.html", location.href);
       base.searchParams.set("project", pc);
       location.href = base.toString();
@@ -700,18 +699,11 @@ function startApp(){
       return isNoData(v) ? null : String(v).trim();
     })) || "";
 
-    const bua = firstNonNull(rowsForProject.map(r=>{
-      const v = pick(r, PROJECT_FIELDS.bua);
-      const n = toNumberOrNull(v);
-      return n == null ? null : n;
-    }));
-
     const ps = firstNonNull(rowsForProject.map(r=>{
       const v = pick(r, PROJECT_FIELDS.ps);
       return isNoData(v) ? null : String(v).trim();
     })) || "";
 
-    // Teams: collect from first row (usually enough), but also merge unique
     const teamEntries = [];
     for(const r of rowsForProject){
       for(const entry of teamSummaryFromRow(r, typeCols)){
@@ -757,7 +749,6 @@ function startApp(){
     return {
       pc,
       name,
-      bua,
       ps,
       teams,
       projectPP,
@@ -765,6 +756,23 @@ function startApp(){
       missedStages: missed.map(s => s.label),
       missedCount: missed.length
     };
+  }
+
+  function renderProjectDropdown(cards){
+    if(!elProjectSelect) return;
+    const current = elProjectSelect.value || "";
+
+    elProjectSelect.innerHTML = `<option value="">Select project…</option>`;
+    for(const c of cards){
+      const opt = document.createElement("option");
+      opt.value = c.pc;
+      opt.textContent = c.name ? `${c.pc} — ${c.name}` : c.pc;
+      elProjectSelect.appendChild(opt);
+    }
+
+    if(current && cards.some(c => c.pc === current)){
+      elProjectSelect.value = current;
+    }
   }
 
   function renderLanding(){
@@ -789,11 +797,20 @@ function startApp(){
       cards.push(card);
     }
 
-    cards.sort((a,b)=> a.pc.localeCompare(b.pc, undefined, { numeric:true, sensitivity:"base" }));
+    // ✅ Sort: missed first, then on track; within group keep alpha/numeric
+    cards.sort((a,b)=>{
+      const am = a.missedCount > 0 ? 1 : 0;
+      const bm = b.missedCount > 0 ? 1 : 0;
+      if(am !== bm) return bm - am;                 // missed first
+      if(a.missedCount !== b.missedCount) return b.missedCount - a.missedCount; // more missed first
+      return a.pc.localeCompare(b.pc, undefined, { numeric:true, sensitivity:"base" });
+    });
+
+    renderProjectDropdown(cards);
 
     landing.setData({
       title: "Projects",
-      subtitle: `${cards.length} projects`,
+      subtitle: "",
       projects: cards
     });
   }
@@ -835,6 +852,17 @@ function startApp(){
     });
   }
 
+  if(elProjectSelect){
+    elProjectSelect.addEventListener("change", ()=>{
+      const pc = String(elProjectSelect.value || "").trim();
+      if(pc){
+        const base = new URL("./dashboard.html", location.href);
+        base.searchParams.set("project", pc);
+        location.href = base.toString();
+      }
+    });
+  }
+
   if(elFile){
     elFile.addEventListener("change", async ()=>{
       const f = elFile.files?.[0];
@@ -862,7 +890,7 @@ function startApp(){
         }
       } catch (err){
         console.error(err);
-        setStatus(`Upload failed: ${err?.message || err}`, "warn");
+        setStatus(`Upload failed`, "warn");
       }
     });
   }
@@ -873,8 +901,7 @@ function startApp(){
   (async ()=>{
     const norm = await loadData();
     if(!norm){
-      // Still initialize modules with empty state so page isn't blank
-      if(landing) landing.setData({ title:"Projects", subtitle:"0 projects", projects:[] });
+      if(landing) landing.setData({ title:"Projects", subtitle:"", projects:[] });
       if(gantt) gantt.setData({ title:"No data", projectPP:null, stages:[], runwayDate:null });
       if(metrics) metrics.setData({ title:"", hours:{AH:null,TCH:null,BH:null}, people:[], runway:null });
       return;
