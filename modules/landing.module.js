@@ -8,30 +8,16 @@ export function initLanding(mountEl, opts = {}){
         flex-direction:column;
         gap:12px;
       }
-      .lpHeader{
-        display:flex;
-        align-items:flex-end;
-        justify-content:space-between;
-        gap:12px;
-        flex-wrap:wrap;
-      }
-      .lpHeader h2{
-        margin:0;
-        font-size:14px;
-        letter-spacing:0.2px;
-      }
-      .lpSub{
-        margin-top:4px;
-        font-size:12px;
-        color: var(--muted);
-      }
 
       .tileGrid{
         display:grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
         gap:12px;
       }
-      @media (max-width: 1100px){
+      @media (max-width: 1320px){
+        .tileGrid{ grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      }
+      @media (max-width: 980px){
         .tileGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
       }
       @media (max-width: 720px){
@@ -44,13 +30,16 @@ export function initLanding(mountEl, opts = {}){
         background: rgba(0,0,0,0.10);
         padding:12px;
         cursor:pointer;
-        transition: transform .08s ease, border-color .12s ease, background .12s ease;
+        transition: transform .08s ease, border-color .12s ease, background .12s ease, box-shadow .12s ease;
         box-shadow: 0 10px 30px rgba(0,0,0,0.20);
       }
       .tile:hover{
-        transform: translateY(-1px);
-        border-color: rgba(255,255,255,0.16);
-        background: rgba(255,255,255,0.04);
+        transform: translateY(-2px);
+        border-color: rgba(255,255,255,0.28);
+        background: rgba(255,255,255,0.06);
+        box-shadow:
+          0 14px 40px rgba(0,0,0,0.32),
+          0 0 0 1px rgba(255,255,255,0.08) inset;
       }
 
       .tTop{
@@ -64,8 +53,8 @@ export function initLanding(mountEl, opts = {}){
       }
       .tCode{
         font-size:12px;
-        color: rgba(255,255,255,0.85);
-        font-weight:700;
+        color: rgba(255,255,255,0.9);
+        font-weight:800;
         letter-spacing:0.2px;
       }
       .tName{
@@ -92,9 +81,8 @@ export function initLanding(mountEl, opts = {}){
         color: rgba(255,255,255,0.82);
         white-space:nowrap;
       }
-      .chip.warn{ color: var(--warn); border-color: rgba(255,209,138,0.30); }
-      .chip.bad{ color: var(--bad); border-color: rgba(255,122,122,0.30); }
-      .chip.ok{ color: var(--ok); border-color: rgba(139,255,178,0.30); }
+      .chip.bad{ color: var(--bad); border-color: rgba(255,122,122,0.40); }
+      .chip.ok{ color: var(--ok); border-color: rgba(139,255,178,0.35); }
 
       .tBody{
         margin-top:10px;
@@ -102,15 +90,32 @@ export function initLanding(mountEl, opts = {}){
         grid-template-columns: 1fr;
         gap:8px;
       }
-      .row{
-        display:flex;
-        align-items:center;
-        justify-content:space-between;
-        gap:10px;
-        font-size:12px;
+
+      .ppWrap{
+        margin-top:2px;
+        border:1px solid rgba(255,255,255,0.10);
+        border-radius:999px;
+        background: rgba(0,0,0,0.14);
+        overflow:hidden;
+        height:14px;
+        position:relative;
       }
-      .k{ color: var(--muted); }
-      .v{ color: rgba(255,255,255,0.88); text-align:right; white-space:nowrap; }
+      .ppFill{
+        position:absolute;
+        top:0; bottom:0; left:0;
+        width:0%;
+        background: rgba(255, 92, 162, 0.92);
+      }
+      .ppTxt{
+        position:relative;
+        z-index:1;
+        font-size:11px;
+        color: rgba(255,255,255,0.90);
+        line-height:14px;
+        text-align:right;
+        padding:0 8px;
+        user-select:none;
+      }
 
       .teams{
         display:flex;
@@ -129,6 +134,31 @@ export function initLanding(mountEl, opts = {}){
       }
       .teamTag b{ color: rgba(255,255,255,0.92); font-weight:600; }
 
+      .line{
+        font-size:12px;
+        display:flex;
+        gap:10px;
+        align-items:flex-start;
+        justify-content:space-between;
+      }
+      .k{ color: var(--muted); flex:0 0 auto; }
+      .v{
+        color: rgba(255,255,255,0.88);
+        text-align:right;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+        max-width: 70%;
+      }
+
+      .v.multiline{
+        white-space:normal;
+        text-overflow:clip;
+        max-width: 100%;
+        text-align:left;
+        line-height:1.3;
+      }
+
       .empty{
         padding:16px;
         border:1px dashed rgba(255,255,255,0.14);
@@ -140,20 +170,11 @@ export function initLanding(mountEl, opts = {}){
     </style>
 
     <div class="lpWrap">
-      <div class="lpHeader">
-        <div>
-          <h2 id="lpTitle">Projects</h2>
-          <div id="lpSub" class="lpSub"></div>
-        </div>
-      </div>
-
       <div id="lpGrid" class="tileGrid"></div>
       <div id="lpEmpty" class="empty" style="display:none;">No projects match the current filter.</div>
     </div>
   `;
 
-  const elTitle = mountEl.querySelector("#lpTitle");
-  const elSub = mountEl.querySelector("#lpSub");
   const elGrid = mountEl.querySelector("#lpGrid");
   const elEmpty = mountEl.querySelector("#lpEmpty");
 
@@ -172,13 +193,6 @@ export function initLanding(mountEl, opts = {}){
     return s ? s : "/";
   }
 
-  function fmtBUA(v){
-    if(v == null) return "/";
-    const n = Number(v);
-    if(!Number.isFinite(n)) return "/";
-    return new Intl.NumberFormat(undefined, { maximumFractionDigits:0 }).format(n);
-  }
-
   function fmtPct(v){
     if(v == null) return "/";
     const n = Number(v);
@@ -186,8 +200,13 @@ export function initLanding(mountEl, opts = {}){
     return `${Math.round(n)}%`;
   }
 
+  function safePct(v){
+    const n = Number(v);
+    if(!Number.isFinite(n)) return null;
+    return Math.max(0, Math.min(100, n));
+  }
+
   function teamText(teams){
-    // teams = [{type, name}]
     const parts = [];
     for(const t of (teams||[])){
       const nm = (t?.name || "").trim();
@@ -199,30 +218,26 @@ export function initLanding(mountEl, opts = {}){
   }
 
   function renderTile(p){
-    const missed = (p.missedStages || []);
+    const missed = (p.missedStages || []).filter(Boolean);
+    const pp = safePct(p.projectPP);
+
     const chips = [];
-
-    const pp = (p.projectPP == null ? null : Number(p.projectPP));
-
     if(missed.length){
-      chips.push(`<span class="chip bad" title="Overdue stage(s)">${escapeHtml(missed[0])}${missed.length>1 ? ` +${missed.length-1}` : ""}</span>`);
+      chips.push(`<span class="chip bad" title="Missed stage(s)">Missed</span>`);
     } else {
       chips.push(`<span class="chip ok">On track</span>`);
     }
 
-    if(p.currentStage){
-      chips.push(`<span class="chip warn" title="Current stage">${escapeHtml(p.currentStage)}</span>`);
-    } else {
-      chips.push(`<span class="chip">Stage /</span>`);
-    }
-
-    chips.push(`<span class="chip" title="Project progress">${escapeHtml(fmtPct(pp))}</span>`);
-
     const teams = teamText(p.teams);
-
     const teamHtml = teams.length
       ? `<div class="teams">${teams.map(t => `<span class="teamTag"><b>${escapeHtml(t.short)}:</b> ${escapeHtml(t.name)}</span>`).join("")}</div>`
       : `<div class="teams"><span class="teamTag"><b>Team:</b> /</span></div>`;
+
+    const missedText = missed.length ? missed.join(", ") : "/";
+    const currentText = p.currentStage ? p.currentStage : "/";
+
+    const ppText = (pp == null) ? "/" : `${Math.round(pp)}%`;
+    const ppWidth = (pp == null) ? 0 : pp;
 
     return `
       <div class="tile" data-pc="${escapeHtml(p.pc)}" title="Open dashboard">
@@ -235,16 +250,24 @@ export function initLanding(mountEl, opts = {}){
         </div>
 
         <div class="tBody">
-          ${teamHtml}
-
-          <div class="row">
-            <div class="k">BUA</div>
-            <div class="v">${escapeHtml(fmtBUA(p.bua))}</div>
+          <div>
+            <div class="k" style="font-size:11px; margin-bottom:6px;">Project %</div>
+            <div class="ppWrap" aria-label="Project progress">
+              <div class="ppFill" style="width:${ppWidth}%;"></div>
+              <div class="ppTxt">${escapeHtml(ppText)}</div>
+            </div>
           </div>
 
-          <div class="row">
-            <div class="k">Status</div>
-            <div class="v">${escapeHtml(fmtSlash(p.ps))}</div>
+          ${teamHtml}
+
+          <div class="line">
+            <div class="k">Current</div>
+            <div class="v">${escapeHtml(currentText)}</div>
+          </div>
+
+          <div class="line">
+            <div class="k">Missed</div>
+            <div class="v multiline" title="${escapeHtml(missedText)}">${escapeHtml(missedText)}</div>
           </div>
         </div>
       </div>
@@ -252,12 +275,7 @@ export function initLanding(mountEl, opts = {}){
   }
 
   function setData(data){
-    const title = data?.title || "Projects";
-    const subtitle = data?.subtitle || "";
     const projects = Array.isArray(data?.projects) ? data.projects : [];
-
-    elTitle.textContent = title;
-    elSub.textContent = subtitle;
 
     if(!projects.length){
       elGrid.innerHTML = "";
