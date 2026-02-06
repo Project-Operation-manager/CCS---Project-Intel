@@ -6,17 +6,14 @@
   <title>Project Intel — Landing</title>
   <link rel="icon" href="data:," />
 
-  <!-- Chart + XLSX (XLSX only needed for upload; Chart not needed but safe) -->
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js"></script>
 
   <style>
     :root{
       --bg:#0b1220; --card:#121b2f; --text:#e8eefc; --muted:#9fb0d0; --grid:#22304f;
-
       --chip:#0f172a;
       --chipBorder: rgba(255,255,255,0.10);
-
       --ok:#8bffb2;
       --warn:#ffd18a;
       --bad:#ff7a7a;
@@ -68,8 +65,39 @@
     }
     select{ min-width: 220px; }
 
-    label{ font-size:12px; color:var(--muted); display:flex; align-items:center; gap:8px; }
-    input[type="file"]{ color:var(--muted); }
+    /* Upload button */
+    .btn{
+      border:1px solid rgba(255,255,255,0.16);
+      background: rgba(255,255,255,0.06);
+      color: var(--text);
+      border-radius: 12px;
+      padding: 10px 12px;
+      cursor:pointer;
+      font-size:12px;
+      font-weight:700;
+      letter-spacing:0.2px;
+      transition: transform .05s ease, border-color .15s ease, background .15s ease, box-shadow .15s ease;
+      user-select:none;
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      height: 40px;
+    }
+    .btn:hover{
+      border-color: rgba(255,255,255,0.30);
+      background: rgba(255,255,255,0.09);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+    }
+    .btn:active{ transform: scale(0.985); }
+
+    /* hidden file input */
+    .hiddenFile{
+      position:absolute;
+      left:-9999px;
+      width:1px; height:1px;
+      opacity:0;
+      pointer-events:none;
+    }
 
     .radioWrap{
       display:flex; gap:10px; align-items:center; justify-content:flex-end;
@@ -129,10 +157,9 @@
         <option value="">Select project…</option>
       </select>
 
-      <label>
-        <span class="pill">Upload</span>
-        <input id="file" type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" />
-      </label>
+      <!-- Upload button triggers hidden file picker -->
+      <button id="uploadBtn" class="btn" type="button">UPLOAD</button>
+      <input id="file" class="hiddenFile" type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" />
 
       <span id="status" class="pill">No file loaded</span>
 
