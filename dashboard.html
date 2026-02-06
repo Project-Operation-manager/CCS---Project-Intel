@@ -34,6 +34,12 @@
       gap:12px;
     }
 
+    .logoLink{
+      display:inline-flex;
+      align-items:center;
+      text-decoration:none;
+    }
+
     .logo{
       height:34px;
       width:auto;
@@ -53,10 +59,7 @@
     }
     a.back:hover{ border-color: rgba(255,255,255,0.20); }
 
-    .pageHead{
-      padding:14px 16px 0;
-    }
-
+    .pageHead{ padding:14px 16px 0; }
     .pageTitle{
       margin:0 0 10px 0;
       font-size: 22px;
@@ -88,13 +91,13 @@
 <body>
 <header>
   <div class="leftBrand">
-    <!-- ✅ Logo top-left -->
-    <img class="logo" src="./CONFLUENCE%20NEW%20LOGO%203.png" alt="Confluence logo" />
+    <a class="logoLink" href="./index.html" aria-label="Go to landing page">
+      <img class="logo" src="./LOGO.png" alt="Logo" />
+    </a>
     <a class="back" href="./index.html">← Back to projects</a>
   </div>
 </header>
 
-<!-- ✅ Text moved down -->
 <div class="pageHead">
   <h1 class="pageTitle">Project Intel</h1>
 </div>
