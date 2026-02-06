@@ -5,28 +5,24 @@ import { initMetrics } from "./modules/metrics.module.js";
 window.addEventListener("DOMContentLoaded", () => startApp());
 
 function startApp(){
-  // ------------------------------
-  // Page detection (Landing vs Dashboard)
-  // ------------------------------
   const landingMount = document.getElementById("landingMount");
   const ganttMount = document.getElementById("ganttMount");
   const metricsMount = document.getElementById("metricsMount");
 
   const mode =
     (ganttMount && metricsMount) ? "dashboard" :
-    (landingMount ? "landing" : "dashboard"); // fallback
+    (landingMount ? "landing" : "dashboard");
 
-  // Optional shared UI controls (may exist only on landing)
   const elFile = document.getElementById("file");
+  const elUploadBtn = document.getElementById("uploadBtn");
   const elStatus = document.getElementById("status");
   const elSearch = document.getElementById("search");
   const elTeamRadios = document.getElementById("teamRadios");
   const elProjectSelect = document.getElementById("projectSelect");
 
   const DEFAULT_CSV_URL = new URL("./sheetjs.csv", import.meta.url);
-  const STORAGE_KEY = "project_intel_data_v1"; // sessionStorage
+  const STORAGE_KEY = "project_intel_data_v1";
 
-  // Stages (in order)
   const STAGES = [
     "CD1","CD2","CD3","CD4","CD5",
     "SD1","SD2","SD3","SD4",
@@ -37,7 +33,6 @@ function startApp(){
     "DC","CO"
   ];
 
-  // Discipline mapping (unchanged)
   const DISCIPLINE = {
     Architecture: new Set(["CD1","CD2","CD5","SD1","SD2","AD","DD1","DD2","TD1","TD2","TD3","WD20","WD40","WD60"]),
     Interior:     new Set(["CD3","SD3","DD3","TD4","WD100"]),
@@ -46,7 +41,6 @@ function startApp(){
 
   const TEAM_TYPES_FIXED = ["Architecture","Interior","Landscape"];
 
-  // Project-level fields
   const PROJECT_FIELDS = {
     projectCode:   ["PC","Project Code","ProjectCode","Code"],
     projectName:   ["Project Name","Project","Name","ProjectName"],
@@ -61,9 +55,6 @@ function startApp(){
     progress:      ["PP","Project progress","Project progess","Progress"],
   };
 
-  // ------------------------------
-  // Helpers
-  // ------------------------------
   function setStatus(msg, kind){
     if(!elStatus) return;
     elStatus.textContent = msg;
@@ -161,7 +152,6 @@ function startApp(){
     if(isNoData(v)) return null;
     if(v instanceof Date && !isNaN(v)) return v;
 
-    // Excel serial
     if(typeof v === "number" && Number.isFinite(v)){
       const epoch = new Date(Date.UTC(1899, 11, 30));
       const d = new Date(epoch.getTime() + v * 86400000);
@@ -171,7 +161,6 @@ function startApp(){
     const s = String(v).trim();
     if(!s) return null;
 
-    // dd-MMM-yy / dd-MMM-yyyy
     const mMon = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/);
     if(mMon){
       let dd = Number(mMon[1]);
@@ -186,7 +175,6 @@ function startApp(){
       }
     }
 
-    // dd/mm/yy
     const m2 = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
     if(m2){
       let dd = +m2[1], mm = +m2[2] - 1, yy = +m2[3];
@@ -273,7 +261,6 @@ function startApp(){
     return { AH, TCH, BH };
   }
 
-  // Parse deployment values of form "Name(10%), Other(5%)"
   function parseDeploymentCell(v){
     if(isNoData(v)) return [];
     const s = String(v || "").trim();
@@ -376,7 +363,6 @@ function startApp(){
       }
     }
 
-    // Derived status + alert
     return STAGES.map(st=>{
       const v = stageMap.get(st);
       const pp = v.stagePP == null ? null : clamp(v.stagePP, 0, 100);
@@ -427,7 +413,6 @@ function startApp(){
     });
   }
 
-  // Team columns (Architecture/Interior/Landscape)
   function discoverTeamTypeColumns(headers){
     const normHeaders = headers.map(h => ({ raw:h, n:normalizeKey(h) }));
     function firstMatch(predicate){
@@ -448,8 +433,6 @@ function startApp(){
       const raw = String(row[col] ?? "").trim();
       if(isFalsyFlag(raw)) continue;
       if(!raw) continue;
-
-      // If not a name, treat as unspecified
       if(!looksLikeName(raw)) return { teamType:type, team:"" };
       return { teamType:type, team: raw };
     }
@@ -469,9 +452,6 @@ function startApp(){
     return out;
   }
 
-  // ------------------------------
-  // CSV/XLSX parsing
-  // ------------------------------
   function detectDelimiter(text){
     const sample = (text || "").replace(/^\uFEFF/, "");
     const line = sample.split(/\r?\n/).find(l => l.trim() !== "") || "";
@@ -540,11 +520,9 @@ function startApp(){
 
     const rows = objects.map(o=>{
       const row = { ...o, __keyMap: keyMap };
-
       const info = deriveTeamInfo(row, typeCols);
       row.__teamType = info.teamType || "";
       row.__team = info.team || "";
-
       return row;
     });
 
@@ -559,7 +537,9 @@ function startApp(){
     sessionStorage.setItem(STORAGE_KEY, serializeForStorage(headers, objects));
 
     const norm = normalizeRows(headers, objects);
-    setStatus(`Loaded ${nameForStatus || "sheetjs.csv"} (${norm.rows.length} rows)`, "ok");
+
+    // ✅ no row count text
+    setStatus(`Loaded ${nameForStatus || "sheetjs.csv"}`, "ok");
     return norm;
   }
 
@@ -574,7 +554,9 @@ function startApp(){
 
     sessionStorage.setItem(STORAGE_KEY, serializeForStorage(headers, objects));
     const norm = normalizeRows(headers, objects);
-    setStatus(`Imported ${file.name} (${norm.rows.length} rows)`, "ok");
+
+    // ✅ no row count text
+    setStatus(`Imported ${file.name}`, "ok");
     return norm;
   }
 
@@ -590,35 +572,30 @@ function startApp(){
   }
 
   async function loadData(){
-    // 1) sessionStorage
     const stored = sessionStorage.getItem(STORAGE_KEY);
     if(stored){
       try{
         const parsed = deserializeFromStorage(stored);
         if(parsed){
           const norm = normalizeRows(parsed.headers, parsed.objects);
-          // ✅ removed "Loaded from session" wording
-          setStatus(`Loaded (${norm.rows.length} rows)`, "ok");
+
+          // ✅ no row count text + no "from session" wording
+          setStatus("Loaded", "ok");
           return norm;
         }
-      } catch (e){
-        // fall through
-      }
+      } catch {}
     }
-    // 2) repo fetch
+
     setStatus("Loading sheetjs.csv…");
     try{
       return await loadDefaultFromRepo();
     } catch (err){
       console.warn(err);
-      setStatus(`Auto-load failed`, "warn");
+      setStatus("Auto-load failed", "warn");
       return null;
     }
   }
 
-  // ------------------------------
-  // Landing module (Project Tiles)
-  // ------------------------------
   const landing = landingMount ? initLanding(landingMount, {
     onSelectProject: (pc)=>{
       const base = new URL("./dashboard.html", location.href);
@@ -627,9 +604,6 @@ function startApp(){
     }
   }) : null;
 
-  // ------------------------------
-  // Dashboard modules
-  // ------------------------------
   const gantt = (ganttMount && metricsMount) ? initGantt(ganttMount, {
     fmtWindow: (a,b)=>{
       const mm = (d)=> String(d.getMonth()+1).padStart(2,"0") + "/" + d.getFullYear();
@@ -643,13 +617,9 @@ function startApp(){
     }
   }) : null;
 
-  // ------------------------------
-  // Rendering
-  // ------------------------------
   let allRows = [];
   let typeCols = null;
-
-  let activeTeam = ""; // landing filter
+  let activeTeam = "";
   let searchQuery = "";
 
   function getTeamsAll(){
@@ -797,12 +767,11 @@ function startApp(){
       cards.push(card);
     }
 
-    // ✅ Sort: missed first, then on track; within group keep alpha/numeric
     cards.sort((a,b)=>{
       const am = a.missedCount > 0 ? 1 : 0;
       const bm = b.missedCount > 0 ? 1 : 0;
-      if(am !== bm) return bm - am;                 // missed first
-      if(a.missedCount !== b.missedCount) return b.missedCount - a.missedCount; // more missed first
+      if(am !== bm) return bm - am;
+      if(a.missedCount !== b.missedCount) return b.missedCount - a.missedCount;
       return a.pc.localeCompare(b.pc, undefined, { numeric:true, sensitivity:"base" });
     });
 
@@ -843,9 +812,13 @@ function startApp(){
     metrics.setData({ title, hours, people, runway });
   }
 
-  // ------------------------------
-  // Events
-  // ------------------------------
+  // ✅ Upload button triggers hidden file input
+  if(elUploadBtn && elFile){
+    elUploadBtn.addEventListener("click", ()=>{
+      elFile.click();
+    });
+  }
+
   if(elSearch){
     elSearch.addEventListener("input", ()=>{
       if(mode === "landing") renderLanding();
@@ -868,7 +841,7 @@ function startApp(){
       const f = elFile.files?.[0];
       if(!f) return;
       try{
-        setStatus("Loading upload…");
+        setStatus("Loading…");
         let norm = null;
 
         const name = String(f.name || "").toLowerCase();
@@ -890,14 +863,14 @@ function startApp(){
         }
       } catch (err){
         console.error(err);
-        setStatus(`Upload failed`, "warn");
+        setStatus("Upload failed", "warn");
+      } finally {
+        // allow selecting same file again
+        elFile.value = "";
       }
     });
   }
 
-  // ------------------------------
-  // Boot
-  // ------------------------------
   (async ()=>{
     const norm = await loadData();
     if(!norm){
