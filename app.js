@@ -4,11 +4,12 @@ import { initMetrics } from "./modules/metrics.module.js";
 window.addEventListener("DOMContentLoaded", () => startApp());
 
 function startApp(){
+  // ---------- constants ----------
   const TEAM_TYPES_FIXED = ["Architecture","Interior","Landscape"];
   const TEAM_UNSPEC = "(Unspecified)";
   const TEAM_BLANK_SENTINEL = "__BLANK__";
 
-  // Auto-load this CSV from the repo (relative to app.js)
+  // Auto-load CSV that lives next to app.js (GitHub Pages-friendly)
   const DEFAULT_CSV_URL = new URL("./sheetjs.csv", import.meta.url);
 
   const STAGES = [
@@ -21,20 +22,21 @@ function startApp(){
     "DC","CO"
   ];
 
-  // Discipline mapping for stage colors
+  // Discipline mapping
   const DISCIPLINE = {
     Architecture: new Set(["CD1","CD2","CD5","SD1","SD2","AD","DD1","DD2","TD1","TD2","TD3","WD20","WD40","WD60"]),
     Interior:     new Set(["CD3","SD3","DD3","TD4","WD100"]),
     Landscape:    new Set(["CD4","SD4","DD4","TD5","WD80"])
   };
 
-  // Project-level fields
-  const FIELDS = {
+  // Project-level fields (per project)
+  const PROJECT_FIELDS = {
     projectCode:   ["PC","Project Code","ProjectCode","Code"],
     projectName:   ["Project Name","Project","Name","ProjectName"],
-    projectStatus: ["PS","Project Status","Status"],
-    bua:           ["BUA","Built up area","Built Up Area","Built-up area","Builtup Area"],
+    bua:           ["BUA","Built up area","Built-up area","Built Up Area","BUA (sqft)","BUA (sqm)"],
+    ps:            ["PS","Project Status","Status"],
 
+    // totals
     allottedHours: ["AH","Allotted hours","Allotted Hours","Allotted","Allocated hours","Allocated Hours"],
     consumedHours: ["TCH","Total consumed hours","Total Consumed Hours","Consumed hours","Consumed Hours","Consumed"],
     balanceHours:  ["BH","Balanced hours","Balance hours","Balance Hours","Balance"],
@@ -43,39 +45,15 @@ function startApp(){
     progress:      ["PP","Project progress","Project progess","Progress"],
   };
 
-  // ---------- DOM (some pages won't have all of these) ----------
-  const $ = (id)=> document.getElementById(id);
-
-  const elFile = $("file");
-  const elStatus = $("status");
-  const elProjectSelect = $("projectSelect");
-  const elSearch = $("search");
-  const elTeamTypeRadios = $("teamTypeRadios");
-  const elTeamRadios = $("teamRadios");
-  const elTable = $("table");
-  const elRowCount = $("rowCount");
-
-  const elGanttMount = $("ganttMount");
-  const elMetricsMount = $("metricsMount");
-
-  const HAS_DASHBOARD = !!(elGanttMount && elMetricsMount);
-
   // ---------- helpers ----------
-  function setStatus(msg, kind){
-    if(!elStatus){
-      // Avoid crashing on pages without status pill.
-      if(kind === "warn") console.warn(msg);
-      else console.log(msg);
-      return;
-    }
-    elStatus.textContent = msg;
-    elStatus.style.color = "";
-    if(kind === "ok") elStatus.style.color = "var(--ok)";
-    if(kind === "warn") elStatus.style.color = "var(--warn)";
-  }
+  function $(id){ return document.getElementById(id); }
 
   function normalizeKey(k){
-    return String(k||"").replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s_-]+/g,"");
+    return String(k||"")
+      .replace(/^\uFEFF/, "")
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_-]+/g,"");
   }
 
   function buildHeaderIndex(headers){
@@ -105,35 +83,45 @@ function startApp(){
 
   function uniq(arr){ return Array.from(new Set(arr)); }
 
-  function escapeHtml(s){
-    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
-      .replace(/\"/g,"&quot;").replace(/'/g,"&#039;");
-  }
-
   function isNoData(v){
-    const s = String(v ?? "").trim().toLowerCase();
+    if(v == null) return true;
+    const s = String(v).trim();
     if(!s) return true;
+    const low = s.toLowerCase();
     return (
-      s === "no data" || s === "no-data" || s === "nodata" ||
-      s === "no data." || s === "no data " ||
-      s === "na" || s === "n/a" || s === "-" || s === "null"
+      low === "no data" ||
+      low === "nodata" ||
+      low === "na" ||
+      low === "n/a" ||
+      low === "-" ||
+      low === "nan" ||
+      low === "null" ||
+      low === "undefined"
     );
   }
 
-  function isNotInScope(v){
-    const s = String(v ?? "").trim().toLowerCase();
-    return s === "not in scope" || s === "out of scope";
+  function isFalsyFlag(raw){
+    const low = String(raw||"").trim().toLowerCase();
+    if(!low) return true;
+    if(["n","no","false","f","0","na","n/a","-","no data","nodata","nan","not in scope","notinscope"].includes(low)) return true;
+    return false;
+  }
+
+  function isTruthyFlag(raw){
+    const low = String(raw||"").trim().toLowerCase();
+    if(!low) return false;
+    if(["y","yes","true","t","1"].includes(low)) return true;
+    return false;
+  }
+
+  function looksLikeName(raw){
+    return /[a-zA-Z]/.test(String(raw||""));
   }
 
   function toNumberOrNull(v){
-    if(v == null) return null;
-    const s = String(v).trim();
-    if(!s) return null;
-    if(isNoData(s)) return null;
-
-    // preserve numeric 0
+    if(isNoData(v)) return null;
     if(typeof v === "number" && Number.isFinite(v)) return v;
-
+    const s = String(v).trim();
     const cleaned = s.replace(/,/g,"").replace(/[^0-9.\-]/g,"");
     if(!cleaned) return null;
     const n = Number(cleaned);
@@ -141,44 +129,55 @@ function startApp(){
   }
 
   function toPercentOrNull(v){
-    if(v == null) return null;
+    if(isNoData(v)) return null;
     if(typeof v === "number" && Number.isFinite(v)){
-      if(v > 0 && v <= 1) return v * 100;
+      if(v > 0 && v <= 1) return v*100;
       return v;
     }
     const s = String(v).trim();
-    if(!s) return null;
-    if(isNoData(s)) return null;
-
     const hasPct = s.includes("%");
     const n = toNumberOrNull(s);
     if(n == null) return null;
-
     if(hasPct) return n;
-    if(n > 0 && n <= 1) return n * 100;
+    if(n > 0 && n <= 1) return n*100;
     return n;
   }
 
   function clamp(n,a,b){ return Math.max(a, Math.min(b,n)); }
 
   function parseDate(v){
-    if(v==null) return null;
+    if(isNoData(v)) return null;
     if(v instanceof Date && !isNaN(v)) return v;
 
+    // Excel serial number support
     if(typeof v === "number" && Number.isFinite(v)){
       const epoch = new Date(Date.UTC(1899, 11, 30));
       const d = new Date(epoch.getTime() + v * 86400000);
       return isNaN(d)?null:d;
     }
 
-    const s=String(v).trim();
-    if(!s || isNoData(s)) return null;
+    const s = String(v).trim();
+    if(!s) return null;
 
-    // dd-mm-yy / dd/mm/yy / dd.mm.yy
+    // dd-MMM-yy or dd-MMM-yyyy (e.g. 01-Mar-21)
+    const mMon = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/);
+    if(mMon){
+      let dd = Number(mMon[1]);
+      let mon = mMon[2].toLowerCase();
+      let yy = Number(mMon[3]);
+      if(yy < 100) yy += 2000;
+      const monthMap = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+      const mm = monthMap[mon];
+      if(mm != null){
+        const d = new Date(yy, mm, dd);
+        return isNaN(d) ? null : d;
+      }
+    }
+
+    // dd/mm/yyyy
     const m2=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
     if(m2){
-      let dd=+m2[1], mm=+m2[2]-1, yy=+m2[3];
-      if(yy<100) yy+=2000;
+      let dd=+m2[1], mm=+m2[2]-1, yy=+m2[3]; if(yy<100) yy+=2000;
       const d=new Date(yy,mm,dd);
       return isNaN(d)?null:d;
     }
@@ -189,136 +188,184 @@ function startApp(){
 
   function daysBetween(a,b){ return Math.round((b-a)/86400000); }
 
+  function escapeHtml(s){
+    return String(s)
+      .replace(/&/g,"&amp;")
+      .replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;")
+      .replace(/\"/g,"&quot;")
+      .replace(/'/g,"&#039;");
+  }
+
+  // Deployment parsing: keeps absolute percentages if present: "Name(25%)"
+  function parseDeploymentCell(v){
+    if(isNoData(v)) return [];
+    const s=String(v||"").trim(); if(!s) return [];
+    return s.split(",")
+      .map(p=>p.trim())
+      .filter(Boolean)
+      .map(part=>{
+        const m=part.match(/^(.*?)\s*\(\s*([0-9]+(?:\.[0-9]+)?)\s*%?\s*\)\s*$/);
+        if(m) return { name:(m[1].trim()||"(Blank)"), pct:Number(m[2]) };
+        return { name:part, pct:0 };
+      });
+  }
+
+  function discoverTeamTypeColumns(headers){
+    // your file uses exact headers: Architecture, Interior, Landscape
+    const normHeaders = headers.map(h => ({ raw:h, n:normalizeKey(h) }));
+    function firstMatch(predicate){
+      const hit = normHeaders.find(predicate);
+      return hit ? hit.raw : null;
+    }
+    const arch = firstMatch(h => h.n === "architecture" || h.n.includes("architecture") || h.n === "arch");
+    const interior = firstMatch(h => h.n === "interior" || h.n.includes("interior") || h.n.includes("interiors"));
+    const landscape = firstMatch(h => h.n === "landscape" || h.n.includes("landscape") || h.n.includes("landacpe") || h.n === "landacpe");
+    return { Architecture: arch, Interior: interior, Landscape: landscape };
+  }
+
+  function deriveTeamInfo(row, typeCols){
+    // New structure: the discipline columns store a team lead / names, or "Not in scope"
+    for(const type of TEAM_TYPES_FIXED){
+      const col = typeCols?.[type];
+      if(!col) continue;
+
+      const raw = String(row[col] ?? "").trim();
+      if(isFalsyFlag(raw)) continue;
+
+      // If it's a boolean-like truthy, treat as "team unspecified"
+      if(isTruthyFlag(raw) || !looksLikeName(raw)){
+        return { teamType:type, team:"" };
+      }
+
+      return { teamType:type, team: raw };
+    }
+    return { teamType:"", team:"" };
+  }
+
+  function displayTeam(t){ return t ? t : TEAM_UNSPEC; }
+  function normalizeTeamSelectionValue(v){ return (v === TEAM_UNSPEC) ? TEAM_BLANK_SENTINEL : v; }
+
+  function matchTeam(rowTeam, activeTeam){
+    const rt = String(rowTeam || "").trim().toLowerCase();
+    if(activeTeam === TEAM_BLANK_SENTINEL) return rt === "";
+    return rt === String(activeTeam||"").trim().toLowerCase();
+  }
+
   function disciplineForStage(stage){
+    if(DISCIPLINE.Architecture.has(stage)) return "Architecture";
     if(DISCIPLINE.Interior.has(stage)) return "Interior";
     if(DISCIPLINE.Landscape.has(stage)) return "Landscape";
     return "Architecture";
   }
 
-  // --------- new per-stage schema (your new CSV structure) ----------
+  // Stage schema for NEW structure
   function stageSchema(stageCode){
     return {
       start: [
-        `${stageCode} Start date`,
-        `${stageCode} Start Date`,
-        `${stageCode} Start`
+        `${stageCode} Start date`, `${stageCode} Start Date`,
+        `${stageCode} Start`, `${stageCode} Begin`, `${stageCode} StartDate`
       ],
-      end: [
-        `${stageCode} Planned End date`,
-        `${stageCode} Planned End Date`,
-        `${stageCode} Planned End`,
-        `${stageCode} End date`,
-        `${stageCode} End Date`,
-        `${stageCode} End`
+      plannedEnd: [
+        `${stageCode} Planned End date`, `${stageCode} Planned End Date`, `${stageCode} Planned End`,
+        `${stageCode} End date`, `${stageCode} End Date`, `${stageCode} End`, `${stageCode} Finish`, `${stageCode} EndDate`
       ],
       extEnd: [
-        `${stageCode} Ext end date`,
-        `${stageCode} Ext End date`,
-        `${stageCode} Ext End Date`
+        `${stageCode} Ext end date`, `${stageCode} Ext End Date`, `${stageCode} Ext End date`
       ],
       deliverables: [
-        `${stageCode} Deliverables`,
-        `${stageCode} Deliverable`
+        `${stageCode} Deliverables`, `${stageCode} Deliverable`
       ],
       allocated: [
-        `${stageCode} Allocated`,
-        `${stageCode} Allotted`,
-        `${stageCode} Allotted Hours`
+        `${stageCode} Allocated`, `${stageCode} Allotted`, `${stageCode} Allotted hours`, `${stageCode} Allotted Hours`,
+        `${stageCode} Allocated hours`, `${stageCode} Allocated Hours`
       ],
       consumed: [
-        `${stageCode} Consumed`,
-        `${stageCode} Total Consumed`,
-        `${stageCode} TCH`
+        `${stageCode} Consumed`, `${stageCode} Consumed hours`, `${stageCode} Consumed Hours`,
+        `${stageCode} Total consumed hours`, `${stageCode} Total Consumed Hours`
       ],
       statusProgress: [
-        `${stageCode} Status Progress`,
-        `${stageCode} Stage Status Progress`,
-        `${stageCode} Progress`
+        `${stageCode} Status Progress`, `${stageCode} Stage Status Progress`, `${stageCode} Stage Progress`,
+        `${stageCode} Progress`, `${stageCode} PP`
       ]
     };
   }
 
-  function parseDeploymentInfo(v){
-    // Accept both "Name (10%)" and plain "Name" (no %)
-    const s = String(v ?? "").trim();
-    if(!s || isNoData(s)) return { people: [], names: [] };
+  function buildStagesFromProjectRowsWide(rowsForProject, today){
+    const stageMap = new Map(STAGES.map(s => [s, {
+      start:null, end:null, extEnd:null,
+      deliverables:null, allocated:null, consumed:null,
+      stagePP:null
+    }]));
 
-    const parts = s.split(",").map(p=>p.trim()).filter(Boolean);
-    const people = [];
-    const names = [];
+    const maxOrKeep = (cur, val)=>{
+      if(val == null) return cur;
+      if(cur == null) return val;
+      return Math.max(cur, val);
+    };
 
-    for(const part of parts){
-      const m = part.match(/^(.*?)\s*\(\s*([0-9]+(?:\.[0-9]+)?)\s*%?\s*\)\s*$/);
-      if(m){
-        const name = (m[1].trim() || "(Blank)");
-        const pct = Number(m[2]);
-        if(Number.isFinite(pct) && pct > 0) people.push({ name, pct });
-        else names.push(name);
-      } else {
-        names.push(part);
+    for(const row of rowsForProject){
+      for(const st of STAGES){
+        const sch = stageSchema(st);
+        const cur = stageMap.get(st);
+
+        const startDates = getAllValues(row, sch.start).map(parseDate).filter(Boolean);
+        const plannedEnds = getAllValues(row, sch.plannedEnd).map(parseDate).filter(Boolean);
+        const extEnds = getAllValues(row, sch.extEnd).map(parseDate).filter(Boolean);
+
+        let s = startDates.length ? new Date(Math.min(...startDates.map(d=>d.getTime()))) : null;
+        let e = plannedEnds.length ? new Date(Math.max(...plannedEnds.map(d=>d.getTime()))) : null;
+        let x = extEnds.length ? new Date(Math.max(...extEnds.map(d=>d.getTime()))) : null;
+
+        const delVals = getAllValues(row, sch.deliverables).map(toNumberOrNull).filter(v=>v!=null);
+        const aVals = getAllValues(row, sch.allocated).map(toNumberOrNull).filter(v=>v!=null);
+        const cVals = getAllValues(row, sch.consumed).map(toNumberOrNull).filter(v=>v!=null);
+        const ppVals = getAllValues(row, sch.statusProgress).map(toPercentOrNull).filter(v=>v!=null);
+
+        if(delVals.length) cur.deliverables = maxOrKeep(cur.deliverables, Math.max(...delVals));
+        if(aVals.length) cur.allocated = maxOrKeep(cur.allocated, Math.max(...aVals));
+        if(cVals.length) cur.consumed = maxOrKeep(cur.consumed, Math.max(...cVals));
+        if(ppVals.length) cur.stagePP = maxOrKeep(cur.stagePP, Math.max(...ppVals));
+
+        if(!(s||e||x)) continue;
+        if(!e && x) e = x;
+        if(!s && e) s = e;
+        if(!x && e) x = e;
+
+        if(s && (!cur.start || s < cur.start)) cur.start = s;
+        if(e && (!cur.end || e > cur.end)) cur.end = e;
+        if(x && (!cur.extEnd || x > cur.extEnd)) cur.extEnd = x;
       }
     }
 
-    // Sort by pct desc
-    people.sort((a,b)=>b.pct-a.pct);
-    return { people, names: uniq(names) };
-  }
-
-  function computeRunwayFromPeopleAndBH(people, BH){
-    const bh = (BH == null) ? null : Number(BH);
-    const factorDecimal = (people || []).reduce((s,p)=>s + (Number(p.pct||0)/100), 0);
-    const monthlyBurn = factorDecimal * 174.25;
-
-    if(bh == null) return { runwayMonths: null, runwayDate: null, factorDecimal, monthlyBurn };
-    if(!Number.isFinite(monthlyBurn) || monthlyBurn <= 0) return { runwayMonths: null, runwayDate: null, factorDecimal, monthlyBurn };
-    if(!Number.isFinite(bh) || bh <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
-
-    const runwayMonths = bh / monthlyBurn;
-    if(!Number.isFinite(runwayMonths) || runwayMonths <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
-
-    const today = new Date();
-    const days = runwayMonths * 30.4375;
-    const runwayDate = new Date(today.getTime() + days * 86400000);
-
-    return { runwayMonths, runwayDate, factorDecimal, monthlyBurn };
-  }
-
-  function buildStagesFromProjectRow(row, today){
-    if(!row) return [];
-
     return STAGES.map(st=>{
-      const sch = stageSchema(st);
+      const v = stageMap.get(st);
 
-      const start = parseDate(pick(row, sch.start));
-      const end = parseDate(pick(row, sch.end));
-      const extEnd = parseDate(pick(row, sch.extEnd));
+      const pp = v.stagePP == null ? null : clamp(v.stagePP, 0, 100);
 
-      const del = toNumberOrNull(pick(row, sch.deliverables));
-      const alloc = toNumberOrNull(pick(row, sch.allocated));
-      const cons = toNumberOrNull(pick(row, sch.consumed));
+      // Derived status (since file only has "Status Progress")
+      let status = null;
+      if(pp == null) status = null;
+      else if(pp >= 100) status = "Complete";
+      else if(pp > 0) status = "In progress";
+      else status = "Not started";
 
-      const ppRaw = pick(row, sch.statusProgress);
-      const pp = toPercentOrNull(ppRaw);
-      const stagePP = (pp == null) ? null : clamp(pp, 0, 100);
-
-      // Alert logic (based on dates and completion)
+      // Alert badge (timeline based)
       const alert = { kind:"", text:"" };
-      const done = (stagePP != null && stagePP >= 100);
-
-      if(done){
+      if(pp != null && pp >= 100){
         alert.kind = "ok";
         alert.text = "Complete";
-      } else if(start && end){
-        if(today > end){
+      } else if(v.start && v.end){
+        if(today > v.end){
           alert.kind = "bad";
-          alert.text = `Overdue +${Math.max(1, daysBetween(end, today))}d`;
-        } else if(today >= start && today <= end){
-          const spent = Math.max(0, daysBetween(start, today));
-          const left = Math.max(0, daysBetween(today, end));
+          alert.text = `Overdue +${Math.max(1, daysBetween(v.end, today))}d`;
+        } else if(today >= v.start && today <= v.end){
+          const spent = Math.max(0, daysBetween(v.start, today));
+          const left = Math.max(0, daysBetween(today, v.end));
           alert.kind = "warn";
           alert.text = `Spent ${spent}d • Left ${left}d`;
         } else {
-          const dToStart = daysBetween(today, start);
+          const dToStart = daysBetween(today, v.start);
           if(dToStart > 0 && dToStart <= 15){
             alert.kind = "warn";
             alert.text = `In ${dToStart}d`;
@@ -329,27 +376,288 @@ function startApp(){
       return {
         label: st,
         discipline: disciplineForStage(st),
-
-        start,
-        end,
-        extEnd,
-
-        // New fields
-        deliverables: del,
-        allocated: alloc,
-        consumed: cons,
-
-        // Use Status Progress as stage %; keep raw text for display if needed
-        statusText: (ppRaw == null || String(ppRaw).trim() === "" || isNoData(ppRaw)) ? "" : String(ppRaw).trim(),
-        stagePP,
-
-        done,
+        start: v.start,
+        end: v.end,
+        extEnd: v.extEnd,
+        deliverables: v.deliverables,
+        allocated: v.allocated,
+        consumed: v.consumed,
+        stagePP: pp,
+        status,
         alert
       };
     });
   }
 
-  // ---------- CSV parsing ----------
+  // Project totals: use MAX to avoid double-counting repeated totals across rows
+  function firstNonNull(vals){
+    for(const v of vals){
+      if(v != null) return v;
+    }
+    return null;
+  }
+  function maxNonNull(vals){
+    const filtered = vals.filter(v=>v!=null);
+    if(!filtered.length) return null;
+    return Math.max(...filtered);
+  }
+
+  function computeProjectHours(rows){
+    const AH = maxNonNull(rows.map(r=>toNumberOrNull(pick(r, PROJECT_FIELDS.allottedHours))));
+    const TCH = maxNonNull(rows.map(r=>toNumberOrNull(pick(r, PROJECT_FIELDS.consumedHours))));
+    const BHraw = maxNonNull(rows.map(r=>toNumberOrNull(pick(r, PROJECT_FIELDS.balanceHours))));
+
+    // If BH missing, compute if possible
+    let BH = BHraw;
+    if(BH == null && AH != null && TCH != null) BH = AH - TCH;
+
+    return { AH, TCH, BH };
+  }
+
+  function computeDeploymentPeople(rows){
+    // If the same DYT repeats, just take first non-empty string to avoid duplicates
+    const dyt = firstNonNull(rows.map(r=>{
+      const v = pick(r, PROJECT_FIELDS.deployment);
+      return isNoData(v) ? null : String(v).trim();
+    }));
+
+    if(!dyt) return [];
+    const m = new Map();
+    for(const item of parseDeploymentCell(dyt)){
+      const name = String(item.name||"").trim() || "(Blank)";
+      const pct = Number.isFinite(item.pct) ? item.pct : 0;
+      // keep only percent entries (chart expects %)
+      if(pct <= 0) continue;
+      m.set(name, (m.get(name)||0) + pct);
+    }
+    return Array.from(m.entries())
+      .map(([name,pct])=>({name,pct}))
+      .sort((a,b)=>b.pct-a.pct);
+  }
+
+  function computeProjectPP(rows){
+    const pps = rows.map(r=>toPercentOrNull(pick(r, PROJECT_FIELDS.progress))).filter(v=>v!=null);
+    if(!pps.length) return null;
+    return clamp(Math.max(...pps), 0, 100);
+  }
+
+  function computeRunwayFromPeopleAndBH(people, BH){
+    const factorDecimal = (people || []).reduce((s,p)=>s + (Number(p.pct||0)/100), 0);
+    const monthlyBurn = factorDecimal * 174.25;
+
+    if(!Number.isFinite(monthlyBurn) || monthlyBurn <= 0) return { runwayMonths: null, runwayDate: null, factorDecimal, monthlyBurn };
+    if(!Number.isFinite(BH) || BH == null || BH <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
+
+    const runwayMonths = BH / monthlyBurn;
+    if(!Number.isFinite(runwayMonths) || runwayMonths <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
+
+    const now = new Date();
+    const days = runwayMonths * 30.4375;
+    const runwayDate = new Date(now.getTime() + days * 86400000);
+
+    return { runwayMonths, runwayDate, factorDecimal, monthlyBurn };
+  }
+
+  // ---------- DOM ----------
+  const elFile = $("file");
+  const elStatus = $("status");
+  const elProjectSelect = $("projectSelect");
+  const elSearch = $("search");
+  const elTeamTypeRadios = $("teamTypeRadios");
+  const elTeamRadios = $("teamRadios");
+  const elTable = $("table");
+  const elRowCount = $("rowCount");
+
+  const ganttMount = $("ganttMount");
+  const metricsMount = $("metricsMount");
+
+  // ---------- state ----------
+  let csvRowsAll = [];
+  let allRows = [];
+  let filteredRows = [];
+  let projectNameMap = new Map();
+  let typeCols = { Architecture:null, Interior:null, Landscape:null };
+
+  let activeTeamType = "";
+  let activeTeam = "";
+  let activeProject = "";
+  let runwayDate = null;
+
+  function setStatus(msg, kind){
+    if(!elStatus) return;
+    elStatus.textContent = msg;
+    elStatus.style.color = "";
+    if(kind === "ok") elStatus.style.color = "var(--ok)";
+    if(kind === "warn") elStatus.style.color = "var(--warn)";
+  }
+
+  // ---------- UI ----------
+  function renderRadioRow(el, values, activeValue, onPick){
+    if(!el) return;
+    el.innerHTML = "";
+    const list = ["", ...(values||[])];
+    for(const v of list){
+      const b = document.createElement("button");
+      b.type="button";
+      b.className = "radioBtn" + ((v===activeValue) ? " active" : "");
+      b.textContent = v ? v : "All";
+      b.dataset.value = v;
+      b.onclick = ()=> onPick(v);
+      el.appendChild(b);
+    }
+  }
+  function setActiveRadio(el, activeValue){
+    if(!el) return;
+    for(const b of el.querySelectorAll(".radioBtn")){
+      b.classList.toggle("active", b.dataset.value === activeValue);
+    }
+  }
+
+  function buildProjectNameMap(rows){
+    projectNameMap = new Map();
+    for(const r of rows){
+      const pc = String(pick(r, PROJECT_FIELDS.projectCode) || "").trim();
+      const pn = String(pick(r, PROJECT_FIELDS.projectName) || "").trim();
+      if(pc && pn && !projectNameMap.has(pc)) projectNameMap.set(pc, pn);
+    }
+  }
+
+  function initProjectDropdown(rows){
+    if(!elProjectSelect) return;
+
+    const codes = uniq((rows||[])
+      .map(r=>String(pick(r, PROJECT_FIELDS.projectCode)||"").trim())
+      .filter(Boolean))
+      .sort((a,b)=>a.localeCompare(b, undefined, { numeric:true, sensitivity:"base" }));
+
+    const prev = activeProject || "";
+    elProjectSelect.innerHTML = `<option value="">Select a project…</option>` +
+      codes.map(pc=>{
+        const pn = projectNameMap.get(pc) || "";
+        const label = pn ? `${pc} — ${pn}` : pc;
+        return `<option value="${escapeHtml(pc)}">${escapeHtml(label)}</option>`;
+      }).join("");
+
+    if(prev && codes.includes(prev)) activeProject = prev;
+    else activeProject = codes[0] || "";
+    elProjectSelect.value = activeProject || "";
+
+    elProjectSelect.disabled = codes.length === 0;
+    if(elSearch) elSearch.disabled = codes.length === 0;
+  }
+
+  function renderTable(rows){
+    if(!elTable) return;
+    if(!rows.length){
+      elTable.innerHTML = `<tr><td class="note">No rows to display.</td></tr>`;
+      return;
+    }
+    const cols = Object.keys(rows[0]).filter(k => k !== "__keyMap");
+    const thead = `<thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>`;
+    const tbody = `<tbody>${rows.slice(0, 400).map(r =>
+      `<tr>${cols.map(c => `<td>${escapeHtml(String(r[c] ?? ""))}</td>`).join("")}</tr>`
+    ).join("")}</tbody>`;
+    elTable.innerHTML = thead + tbody;
+  }
+
+  function rowMatchesTeamType(r){
+    if(!activeTeamType) return true;
+    return String(r.__teamType || "").toLowerCase() === activeTeamType.toLowerCase();
+  }
+  function rowMatchesTeam(r){
+    if(!activeTeam) return true;
+    return matchTeam(r.__team || "", activeTeam);
+  }
+
+  function getTeamsForSelectedType(){
+    const teams = csvRowsAll
+      .filter(r => rowMatchesTeamType(r))
+      .map(r => displayTeam(String(r.__team || "").trim()))
+      .filter(Boolean);
+    return uniq(teams).sort((a,b)=>a.localeCompare(b));
+  }
+
+  function applyCsvFilters(){
+    allRows = csvRowsAll.filter(r => rowMatchesTeamType(r) && rowMatchesTeam(r));
+    buildProjectNameMap(allRows);
+    initProjectDropdown(allRows);
+    renderAll();
+  }
+
+  function setTeamType(v){
+    activeTeamType = v || "";
+    setActiveRadio(elTeamTypeRadios, activeTeamType);
+
+    activeTeam = "";
+    setActiveRadio(elTeamRadios, "");
+
+    const teams = getTeamsForSelectedType();
+    renderRadioRow(elTeamRadios, teams, "", (vv)=> setTeam(vv));
+
+    applyCsvFilters();
+  }
+
+  function setTeam(v){
+    activeTeam = normalizeTeamSelectionValue(v || "");
+    setActiveRadio(elTeamRadios, v || "");
+    applyCsvFilters();
+  }
+
+  function fmtMonthYear(d){
+    const mm = String(d.getMonth()+1).padStart(2,"0");
+    const yy = d.getFullYear();
+    return `${mm}/${yy}`;
+  }
+
+  // ---------- modules ----------
+  const gantt = ganttMount ? initGantt(ganttMount, {
+    fmtWindow: (a,b)=> `${fmtMonthYear(a)} → ${fmtMonthYear(b)}`
+  }) : null;
+
+  const metrics = metricsMount ? initMetrics(metricsMount, {
+    onRunwaySimulated: (sim)=>{
+      runwayDate = sim?.runwayDate || null;
+      gantt?.setRunway(runwayDate);
+    }
+  }) : null;
+
+  function renderAll(){
+    const query = elSearch ? elSearch.value.trim().toLowerCase() : "";
+    activeProject = elProjectSelect ? (elProjectSelect.value || "") : (activeProject || "");
+
+    filteredRows = allRows.filter(row=>{
+      if(activeProject){
+        const code=String(pick(row, PROJECT_FIELDS.projectCode)||"").trim();
+        if(code !== activeProject) return false;
+      }
+      if(!query) return true;
+      return JSON.stringify(row).toLowerCase().includes(query);
+    });
+
+    if(elRowCount) elRowCount.textContent = `${filteredRows.length} rows`;
+    renderTable(filteredRows);
+
+    const rowsForProject = activeProject ? filteredRows : [];
+    const today = new Date();
+
+    const projectName = activeProject ? (projectNameMap.get(activeProject) || "") : "";
+    const title = activeProject ? (projectName ? `${activeProject} — ${projectName}` : activeProject) : "Select a project";
+
+    const stages = activeProject ? buildStagesFromProjectRowsWide(rowsForProject, today) : [];
+    const projectPP = activeProject ? computeProjectPP(rowsForProject) : null;
+    const hours = activeProject ? computeProjectHours(rowsForProject) : {AH:null,TCH:null,BH:null};
+    const people = activeProject ? computeDeploymentPeople(rowsForProject) : [];
+
+    const runway = computeRunwayFromPeopleAndBH(people, hours.BH);
+    runwayDate = runway.runwayDate || null;
+
+    gantt?.setData({ title, projectPP, stages, runwayDate });
+    metrics?.setData({ title, hours, people, runway });
+
+    gantt?.setRunway(runwayDate);
+  }
+
+  // ---------- parsing ----------
   function detectDelimiter(text){
     const sample = (text || "").replace(/^\uFEFF/, "");
     const line = sample.split(/\r?\n/).find(l => l.trim() !== "") || "";
@@ -402,240 +710,39 @@ function startApp(){
     return { headers, objects };
   }
 
-  function getProjectFromUrl(){
-    try{
-      const u = new URL(location.href);
-      return u.searchParams.get("project") || u.searchParams.get("pc") || u.searchParams.get("code") || "";
-    } catch { return ""; }
-  }
-
-  // ---------- UI helpers (guarded) ----------
-  function renderTable(rows){
-    if(!elTable) return;
-    if (!rows.length){
-      elTable.innerHTML = `<tr><td class="note">No rows to display.</td></tr>`;
-      return;
-    }
-    const cols = Object.keys(rows[0]).filter(k => k !== "__keyMap");
-    const thead = `<thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>`;
-    const tbody = `<tbody>${rows.slice(0, 400).map(r =>
-      `<tr>${cols.map(c => `<td>${escapeHtml(String(r[c] ?? ""))}</td>`).join("")}</tr>`
-    ).join("")}</tbody>`;
-    elTable.innerHTML = thead + tbody;
-  }
-
-  function renderRadioRow(el, values, activeValue, onPick){
-    if(!el) return;
-    el.innerHTML = "";
-    const list = ["", ...(values||[])];
-    for(const v of list){
-      const b = document.createElement("button");
-      b.type="button";
-      b.className = "radioBtn" + ((v===activeValue) ? " active" : "");
-      b.textContent = v ? v : "All";
-      b.dataset.value = v;
-      b.onclick = ()=> onPick(v);
-      el.appendChild(b);
-    }
-  }
-
-  function setActiveRadio(el, activeValue){
-    if(!el) return;
-    for(const b of el.querySelectorAll(".radioBtn")){
-      b.classList.toggle("active", b.dataset.value === activeValue);
-    }
-  }
-
-  // ---------- state ----------
-  let projectRowsRaw = [];           // original CSV rows
-  let projectRowByCode = new Map();  // pc -> original row
-  let viewRows = [];                // expanded rows for filtering (team+discipline)
-  let filteredRows = [];            // filtered view rows (for table + project list)
-
-  let activeTeamType = "";
-  let activeTeam = "";
-  let activeProject = "";
-
-  // ---------- building filter view rows ----------
-  function parseTeamNames(cell){
-    const s = String(cell ?? "").trim();
-    if(!s || isNoData(s) || isNotInScope(s)) return [];
-    return s.split(",").map(x=>x.trim()).filter(Boolean);
-  }
-
-  function buildViewRows(headers, objects){
+  async function importCsvText(text, nameForStatus="sheetjs.csv"){
+    const delim = detectDelimiter(text);
+    const matrix = parseDelimited(text, delim);
+    const { headers, objects } = matrixToObjects(matrix);
     const keyMap = buildHeaderIndex(headers);
 
-    projectRowsRaw = objects.map(o => ({ ...o, __keyMap: keyMap }));
-    projectRowByCode = new Map();
-    viewRows = [];
+    typeCols = discoverTeamTypeColumns(headers);
 
-    for(const row of projectRowsRaw){
-      const pc = String(pick(row, FIELDS.projectCode) || "").trim();
-      if(pc && !projectRowByCode.has(pc)) projectRowByCode.set(pc, row);
+    csvRowsAll = objects.map(o=>{
+      const row = { ...o, __keyMap:keyMap };
+      const info = deriveTeamInfo(row, typeCols);
+      row.__teamType = info.teamType || "";
+      row.__team = info.team || "";
+      return row;
+    });
 
-      // Expand by discipline + each name in that discipline cell
-      for(const type of TEAM_TYPES_FIXED){
-        const names = parseTeamNames(row[type]); // columns are literally Architecture/Interior/Landscape
-        if(names.length){
-          for(const n of names){
-            viewRows.push({ ...row, __teamType:type, __team:n, __pc:pc });
-          }
-        } else {
-          // keep an "unspecified" row for discipline (helps filtering to Unspecified)
-          viewRows.push({ ...row, __teamType:type, __team:"", __pc:pc });
-        }
-      }
-    }
+    // radios
+    renderRadioRow(elTeamTypeRadios, TEAM_TYPES_FIXED, "", setTeamType);
+    const teamsAll = uniq(csvRowsAll.map(r=>displayTeam(String(r.__team||"").trim()))).sort((a,b)=>a.localeCompare(b));
+    renderRadioRow(elTeamRadios, teamsAll, "", (v)=> setTeam(v));
+
+    applyCsvFilters();
+    if(nameForStatus) setStatus(`Loaded ${nameForStatus} (${csvRowsAll.length} rows)`, "ok");
   }
 
-  function displayTeam(t){ return t ? t : TEAM_UNSPEC; }
-  function normalizeTeamSelectionValue(v){ return (v === TEAM_UNSPEC) ? TEAM_BLANK_SENTINEL : v; }
-  function matchTeam(rowTeam, active){
-    const rt = String(rowTeam || "").trim().toLowerCase();
-    if(active === TEAM_BLANK_SENTINEL) return rt === "";
-    return rt === String(active||"").trim().toLowerCase();
-  }
-
-  function rowMatchesTeamType(r){
-    if(!activeTeamType) return true;
-    return String(r.__teamType || "").toLowerCase() === String(activeTeamType).toLowerCase();
-  }
-  function rowMatchesTeam(r){
-    if(!activeTeam) return true;
-    return matchTeam(r.__team || "", activeTeam);
-  }
-
-  function getTeamsForSelectedType(){
-    const teams = viewRows
-      .filter(r => rowMatchesTeamType(r))
-      .map(r => displayTeam(String(r.__team || "").trim()))
-      .filter(Boolean);
-    return uniq(teams).sort((a,b)=>a.localeCompare(b));
-  }
-
-  function initProjectDropdownFromFiltered(){
-    const codes = uniq(filteredRows
-      .map(r=>String(r.__pc || "").trim())
-      .filter(Boolean))
-      .sort((a,b)=>a.localeCompare(b));
-
-    const wanted = activeProject || getProjectFromUrl() || "";
-    const picked = (wanted && codes.includes(wanted)) ? wanted : (codes[0] || "");
-
-    activeProject = picked;
-
-    if(elProjectSelect){
-      elProjectSelect.innerHTML =
-        `<option value="">Select a project…</option>` +
-        codes.map(pc=>{
-          const base = projectRowByCode.get(pc);
-          const pn = base ? String(pick(base, FIELDS.projectName) || "").trim() : "";
-          const label = pn ? `${pc} — ${pn}` : pc;
-          return `<option value="${escapeHtml(pc)}">${escapeHtml(label)}</option>`;
-        }).join("");
-
-      elProjectSelect.value = activeProject || "";
-      elProjectSelect.disabled = codes.length === 0;
-    }
-
-    if(elSearch) elSearch.disabled = codes.length === 0;
-  }
-
-  function applyFilters(){
-    filteredRows = viewRows.filter(r => rowMatchesTeamType(r) && rowMatchesTeam(r));
-
-    initProjectDropdownFromFiltered();
-    renderAll();
-  }
-
-  function setTeamType(v){
-    activeTeamType = v || "";
-    setActiveRadio(elTeamTypeRadios, activeTeamType);
-
-    activeTeam = "";
-    setActiveRadio(elTeamRadios, "");
-
-    renderRadioRow(elTeamRadios, getTeamsForSelectedType(), "", (vv)=> setTeam(vv));
-    applyFilters();
-  }
-
-  function setTeam(v){
-    activeTeam = normalizeTeamSelectionValue(v || "");
-    setActiveRadio(elTeamRadios, v || "");
-    applyFilters();
-  }
-
-  // ---------- modules ----------
-  function fmtMonthYear(d){
-    const mm = String(d.getMonth()+1).padStart(2,"0");
-    const yy = d.getFullYear();
-    return `${mm}/${yy}`;
-  }
-
-  const gantt = HAS_DASHBOARD ? initGantt(elGanttMount, {
-    fmtWindow: (a,b)=> `${fmtMonthYear(a)} → ${fmtMonthYear(b)}`
-  }) : null;
-
-  const metrics = HAS_DASHBOARD ? initMetrics(elMetricsMount, {
-    onRunwaySimulated: (sim)=> gantt?.setRunway(sim?.runwayDate || null)
-  }) : null;
-
-  // ---------- render ----------
-  function renderAll(){
-    if(elProjectSelect) activeProject = elProjectSelect.value || activeProject || "";
-    const query = elSearch ? elSearch.value.trim().toLowerCase() : "";
-
-    // filter rows for raw table (uses view rows)
-    let tableRows = filteredRows;
-    if(activeProject){
-      tableRows = tableRows.filter(r => String(r.__pc||"").trim() === String(activeProject).trim());
-    }
-    if(query){
-      tableRows = tableRows.filter(r => JSON.stringify(r).toLowerCase().includes(query));
-    }
-
-    if(elRowCount) elRowCount.textContent = `${tableRows.length} rows`;
-    renderTable(tableRows);
-
-    if(!HAS_DASHBOARD) return;
-
-    const baseRow = projectRowByCode.get(activeProject) || (tableRows[0] || null);
-    const projectName = baseRow ? String(pick(baseRow, FIELDS.projectName) || "").trim() : "";
-    const title = activeProject ? (projectName ? `${activeProject} — ${projectName}` : activeProject) : "Select a project";
-
-    const projectPPraw = baseRow ? pick(baseRow, FIELDS.progress) : null;
-    const projectPP = (() => {
-      const pp = toPercentOrNull(projectPPraw);
-      return (pp == null) ? null : clamp(pp, 0, 100);
-    })();
-
-    const AH = baseRow ? toNumberOrNull(pick(baseRow, FIELDS.allottedHours)) : null;
-    const TCH = baseRow ? toNumberOrNull(pick(baseRow, FIELDS.consumedHours)) : null;
-    const BH = baseRow ? toNumberOrNull(pick(baseRow, FIELDS.balanceHours)) : null;
-
-    const hours = { AH, TCH, BH };
-
-    const depRaw = baseRow ? pick(baseRow, FIELDS.deployment) : null;
-    const dep = parseDeploymentInfo(depRaw);
-
-    const runway = computeRunwayFromPeopleAndBH(dep.people, BH);
-    const runwayDate = runway?.runwayDate || null;
-
-    const today = new Date();
-    const stages = baseRow ? buildStagesFromProjectRow(baseRow, today) : [];
-
-    gantt?.setData({ title, projectPP, stages, runwayDate });
-    metrics?.setData({ title, hours, people: dep.people, deploymentNames: dep.names, runway });
-    gantt?.setRunway(runwayDate);
-  }
-
-  // ---------- import ----------
   async function importFile(file){
     const name=(file?.name||"").toLowerCase();
     setStatus("Loading…");
 
-    // reset UI safely
+    csvRowsAll=[]; allRows=[]; filteredRows=[];
+    activeTeamType=""; activeTeam=""; activeProject="";
+    runwayDate = null;
+
     if(elProjectSelect){
       elProjectSelect.innerHTML = `<option value="">Select a project…</option>`;
       elProjectSelect.disabled = true;
@@ -644,38 +751,16 @@ function startApp(){
       elSearch.value = "";
       elSearch.disabled = true;
     }
+
     if(elTeamTypeRadios) elTeamTypeRadios.innerHTML = "";
     if(elTeamRadios) elTeamRadios.innerHTML = "";
     if(elTable) elTable.innerHTML = "";
     if(elRowCount) elRowCount.textContent = "0 rows";
 
-    projectRowsRaw = [];
-    projectRowByCode = new Map();
-    viewRows = [];
-    filteredRows = [];
-
-    activeTeamType = "";
-    activeTeam = "";
-    activeProject = "";
-
     try{
       if(name.endsWith(".csv") || name.endsWith(".tsv") || name.endsWith(".txt")){
         const text = await file.text();
-        const delim = detectDelimiter(text);
-        const matrix = parseDelimited(text, delim);
-        const { headers, objects } = matrixToObjects(matrix);
-
-        buildViewRows(headers, objects);
-
-        // Render filters
-        renderRadioRow(elTeamTypeRadios, TEAM_TYPES_FIXED, "", setTeamType);
-        renderRadioRow(elTeamRadios, uniq(viewRows.map(r=>displayTeam(r.__team))).sort((a,b)=>a.localeCompare(b)), "", (v)=> setTeam(v));
-
-        // Start with URL project (if any) and apply filters
-        activeProject = getProjectFromUrl() || "";
-        applyFilters();
-
-        setStatus(`Loaded (${delim === "\t" ? "TAB" : delim} • ${projectRowsRaw.length} projects)`, "ok");
+        await importCsvText(text, file.name);
         return;
       }
 
@@ -688,16 +773,25 @@ function startApp(){
         const firstSheet = workbook.SheetNames[0];
         const ws = workbook.Sheets[firstSheet];
         const matrix = XLSX.utils.sheet_to_json(ws,{ header:1, defval:"", raw:false });
-        const { headers, objects } = matrixToObjects(matrix);
 
-        buildViewRows(headers, objects);
+        const { headers, objects } = matrixToObjects(matrix);
+        const keyMap = buildHeaderIndex(headers);
+
+        typeCols = discoverTeamTypeColumns(headers);
+
+        csvRowsAll = objects.map(o=>{
+          const row = { ...o, __keyMap:keyMap };
+          const info = deriveTeamInfo(row, typeCols);
+          row.__teamType = info.teamType || "";
+          row.__team = info.team || "";
+          return row;
+        });
 
         renderRadioRow(elTeamTypeRadios, TEAM_TYPES_FIXED, "", setTeamType);
-        renderRadioRow(elTeamRadios, uniq(viewRows.map(r=>displayTeam(r.__team))).sort((a,b)=>a.localeCompare(b)), "", (v)=> setTeam(v));
+        const teamsAll = uniq(csvRowsAll.map(r=>displayTeam(String(r.__team||"").trim()))).sort((a,b)=>a.localeCompare(b));
+        renderRadioRow(elTeamRadios, teamsAll, "", (v)=> setTeam(v));
 
-        activeProject = getProjectFromUrl() || "";
-        applyFilters();
-
+        applyCsvFilters();
         setStatus(`Imported "${file.name}" (sheet: ${firstSheet})`, "ok");
         return;
       }
@@ -709,28 +803,22 @@ function startApp(){
     }
   }
 
-  // ---------- auto-load sheetjs.csv ----------
   async function autoLoadDefaultCsv(){
-    // If you're opening index.html directly (file://), fetch won't work reliably.
+    // If opened via file://, fetch typically fails
     if(location.protocol === "file:"){
-      setStatus(`Tip: open via a web server or GitHub Pages to auto-load sheetjs.csv`, "warn");
+      setStatus(`Open via GitHub Pages / web server to auto-load sheetjs.csv`, "warn");
       return;
     }
-
     try{
       setStatus("Loading sheetjs.csv…");
-
       const res = await fetch(DEFAULT_CSV_URL.toString(), { cache:"no-store" });
       if(!res.ok) throw new Error(`HTTP ${res.status} (${res.statusText})`);
-
-      const blob = await res.blob();
-      const f = new File([blob], "sheetjs.csv", { type: blob.type || "text/csv" });
-
-      await importFile(f);
-      setStatus("Auto-loaded sheetjs.csv", "ok");
+      const text = await res.text();
+      await importCsvText(text, "sheetjs.csv");
     } catch(err){
       console.warn("Auto-load failed:", err);
       setStatus(`Auto-load failed: ${err?.message || err}`, "warn");
+      // User can still upload manually
     }
   }
 
@@ -744,12 +832,10 @@ function startApp(){
   if(elProjectSelect) elProjectSelect.addEventListener("change", renderAll);
   if(elSearch) elSearch.addEventListener("input", renderAll);
 
-  // Initial empty state
-  if(HAS_DASHBOARD){
-    gantt?.setData({ title:"Select a project", projectPP:null, stages:[], runwayDate:null });
-    metrics?.setData({ title:"", hours:{AH:null,TCH:null,BH:null}, people:[], deploymentNames:[], runway:null });
-  }
+  // Initial empty render
+  gantt?.setData({ title:"Select a project", projectPP:null, stages:[], runwayDate:null });
+  metrics?.setData({ title:"", hours:{AH:null,TCH:null,BH:null}, people:[], runway:null });
 
-  // Kick off auto-load
+  // kick off CSV auto-load
   autoLoadDefaultCsv();
 }
