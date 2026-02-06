@@ -43,41 +43,66 @@ export function initLanding(mountEl, opts = {}){
         .tileGrid{ grid-template-columns: 1fr; }
       }
 
-      /* ✅ pastel gradient tiles */
+      /* ✅ tiles */
       .tile{
         border:1px solid rgba(15,23,42,0.10);
         border-radius:16px;
-        background:
-          linear-gradient(135deg,
-            rgba(255, 236, 213, 0.85) 0%,
-            rgba(232, 242, 255, 0.85) 45%,
-            rgba(234, 255, 245, 0.85) 100%);
+        background: rgba(255,255,255,0.85);
         padding:12px;
         cursor:pointer;
-        transition: transform .10s ease, border-color .15s ease, box-shadow .15s ease, filter .15s ease;
+        transition: transform .12s ease, border-color .15s ease, box-shadow .15s ease, filter .15s ease;
         box-shadow: 0 16px 40px rgba(0,0,0,0.10);
         position:relative;
         overflow:hidden;
       }
 
-      /* subtle “soft light” sheen */
-      .tile:before{
+      /* ✅ corner gradients (top-left + bottom-right) */
+      .tile::before,
+      .tile::after{
         content:"";
         position:absolute;
-        inset:-60px -60px auto auto;
-        width:140px;
-        height:140px;
-        background: radial-gradient(circle at center, rgba(255,255,255,0.65), rgba(255,255,255,0));
-        transform: rotate(15deg);
+        width: 220px;
+        height: 220px;
+        border-radius: 999px;
         pointer-events:none;
+        filter: blur(0px);
+        opacity: 0.95;
+        transition: transform .18s ease, opacity .18s ease;
       }
 
-      /* ✅ stronger hover highlight */
+      /* top-left */
+      .tile::before{
+        left: -120px;
+        top: -120px;
+        background: radial-gradient(circle at 35% 35%,
+          rgba(255, 221, 179, 0.85),
+          rgba(255, 221, 179, 0.35) 45%,
+          rgba(255, 221, 179, 0.00) 70%);
+        transform: scale(1);
+      }
+
+      /* bottom-right */
+      .tile::after{
+        right: -120px;
+        bottom: -120px;
+        background: radial-gradient(circle at 65% 65%,
+          rgba(206, 235, 255, 0.90),
+          rgba(206, 235, 255, 0.35) 45%,
+          rgba(206, 235, 255, 0.00) 70%);
+        transform: scale(1);
+      }
+
+      /* ✅ hover: gradients grow toward center */
       .tile:hover{
         transform: translateY(-3px);
         border-color: rgba(15,23,42,0.22);
         box-shadow: 0 22px 60px rgba(0,0,0,0.18);
         filter: saturate(1.06) contrast(1.02);
+      }
+      .tile:hover::before,
+      .tile:hover::after{
+        transform: scale(1.75);
+        opacity: 1;
       }
 
       .tTop{
@@ -85,6 +110,8 @@ export function initLanding(mountEl, opts = {}){
         align-items:flex-start;
         justify-content:space-between;
         gap:10px;
+        position:relative;
+        z-index:1;
       }
 
       .tTitle{ min-width:0; }
@@ -110,6 +137,8 @@ export function initLanding(mountEl, opts = {}){
         gap:6px;
         flex-wrap:wrap;
         justify-content:flex-end;
+        position:relative;
+        z-index:1;
       }
 
       .chip{
@@ -130,7 +159,9 @@ export function initLanding(mountEl, opts = {}){
         margin-top:10px;
         display:grid;
         grid-template-columns: 1fr;
-        gap:8px;
+        gap:10px;
+        position:relative;
+        z-index:1;
       }
 
       .teams{
@@ -158,8 +189,36 @@ export function initLanding(mountEl, opts = {}){
         gap:10px;
         font-size:12px;
       }
-      .k{ color: rgba(15,23,42,0.60); font-weight:700; }
-      .v{ color: rgba(15,23,42,0.88); text-align:right; white-space:nowrap; font-weight:800; }
+      .k{ color: rgba(15,23,42,0.60); font-weight:800; }
+      .v{ color: rgba(15,23,42,0.88); text-align:right; white-space:nowrap; font-weight:900; }
+
+      /* ✅ progress/status bar */
+      .ppWrap{
+        display:grid;
+        grid-template-columns: 1fr auto;
+        align-items:center;
+        gap:10px;
+      }
+      .ppTrack{
+        height: 10px;
+        border-radius: 999px;
+        background: rgba(15,23,42,0.10);
+        border: 1px solid rgba(15,23,42,0.10);
+        overflow:hidden;
+        position:relative;
+      }
+      .ppFill{
+        height:100%;
+        width: 0%;
+        border-radius: 999px;
+        background: rgba(15,138,75,0.55);
+        transition: width .25s ease;
+      }
+      .ppValue{
+        font-size:12px;
+        font-weight:900;
+        color: rgba(15,23,42,0.88);
+      }
 
       .empty{
         padding:16px;
@@ -204,6 +263,8 @@ export function initLanding(mountEl, opts = {}){
     return s ? s : "/";
   }
 
+  function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
+
   function fmtPct(v){
     if(v == null) return "/";
     const n = Number(v);
@@ -226,10 +287,11 @@ export function initLanding(mountEl, opts = {}){
     const missed = (p.missedStages || []);
     const chips = [];
 
-    const pp = (p.projectPP == null ? null : Number(p.projectPP));
+    const ppRaw = (p.projectPP == null ? null : Number(p.projectPP));
+    const pp = (ppRaw == null || !Number.isFinite(ppRaw)) ? null : clamp(ppRaw, 0, 100);
 
     if(missed.length){
-      chips.push(`<span class="chip bad" title="Overdue stage(s)">${escapeHtml(missed[0])}${missed.length>1 ? ` +${missed.length-1}` : ""}</span>`);
+      chips.push(`<span class="chip bad" title="Missed stage(s)">${escapeHtml(missed[0])}${missed.length>1 ? ` +${missed.length-1}` : ""}</span>`);
     } else {
       chips.push(`<span class="chip ok">On track</span>`);
     }
@@ -240,12 +302,15 @@ export function initLanding(mountEl, opts = {}){
       chips.push(`<span class="chip">Stage /</span>`);
     }
 
-    chips.push(`<span class="chip" title="Project progress">${escapeHtml(fmtPct(pp))}</span>`);
-
     const teams = teamText(p.teams);
     const teamHtml = teams.length
       ? `<div class="teams">${teams.map(t => `<span class="teamTag"><b>${escapeHtml(t.short)}:</b> ${escapeHtml(t.name)}</span>`).join("")}</div>`
       : `<div class="teams"><span class="teamTag"><b>Team:</b> /</span></div>`;
+
+    const pctLabel = fmtPct(pp);
+
+    // ✅ if no data -> show empty bar + "/"
+    const fillWidth = (pp == null) ? 0 : pp;
 
     return `
       <div class="tile" data-pc="${escapeHtml(p.pc)}" title="Open dashboard">
@@ -260,10 +325,17 @@ export function initLanding(mountEl, opts = {}){
         <div class="tBody">
           ${teamHtml}
 
-          <!-- ✅ BUA removed -->
           <div class="row">
             <div class="k">Status</div>
             <div class="v">${escapeHtml(fmtSlash(p.ps))}</div>
+          </div>
+
+          <!-- ✅ Project % status bar -->
+          <div class="ppWrap" aria-label="Project progress">
+            <div class="ppTrack">
+              <div class="ppFill" style="width:${fillWidth}%;"></div>
+            </div>
+            <div class="ppValue">${escapeHtml(pctLabel)}</div>
           </div>
         </div>
       </div>
