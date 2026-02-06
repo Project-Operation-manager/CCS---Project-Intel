@@ -6,8 +6,7 @@ export function initMetrics(mountEl, opts = {}){
   let state = {
     title: "",
     hours: { AH:null, TCH:null, BH:null },
-    people: [],              // [{name,pct}]
-    deploymentNames: [],     // fallback list of names (no %)
+    people: [],
     runway: null
   };
 
@@ -16,7 +15,7 @@ export function initMetrics(mountEl, opts = {}){
 
       <div>
         <b style="font-size:13px;">Hours utilization</b>
-        <div class="note" style="margin-top:6px;">Bar fills by TCH vs AH. If TCH exceeds AH, the extra is hatched. Missing values show as “/”.</div>
+        <div class="note" style="margin-top:6px;">Bar fills by TCH vs AH. If TCH exceeds AH, the extra is hatched. Missing data shows “/”.</div>
 
         <div id="hoursBar" style="
           margin-top:10px;
@@ -29,7 +28,7 @@ export function initMetrics(mountEl, opts = {}){
 
       <div style="border-top:1px solid rgba(255,255,255,0.06); padding-top:14px;">
         <b style="font-size:13px;">Deployment (DYT)</b>
-        <div class="note" style="margin-top:6px;">Uses absolute percentages if present (e.g., Name (10%)). If only names exist, they’re listed with “/”.</div>
+        <div class="note" style="margin-top:6px;">Shows absolute percentages as in your file. Unallocated is shown as the remaining % to 100.</div>
 
         <div style="display:grid; grid-template-columns: 180px 1fr; gap:10px; align-items:center; margin-top:10px;">
           <canvas id="deployChart" height="170"></canvas>
@@ -84,21 +83,24 @@ export function initMetrics(mountEl, opts = {}){
   let baselinePeople = [];
   let simPeople = [];
 
-  function fmt(n, maxFrac=1){
-    if(n == null) return "/";
-    if(!Number.isFinite(n)) return "/";
-    return new Intl.NumberFormat(undefined,{maximumFractionDigits:maxFrac}).format(n);
+  function escapeHtml(s){
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+      .replace(/\"/g,"&quot;").replace(/'/g,"&#039;");
+  }
+
+  function fmtNum(n, digits=1){
+    if(n == null || !Number.isFinite(Number(n))) return "/";
+    return new Intl.NumberFormat(undefined,{maximumFractionDigits:digits}).format(Number(n));
   }
 
   function computeRunway(people, BH){
-    const factorDecimal = (people||[]).reduce((s,p)=>s + (p.pct/100), 0);
+    const factorDecimal = (people || []).reduce((s,p)=>s + (Number(p.pct||0)/100), 0);
     const monthlyBurn = factorDecimal * 174.25;
 
-    if(BH == null || !Number.isFinite(BH)) return { runwayMonths: null, runwayDate: null, factorDecimal, monthlyBurn };
     if(!Number.isFinite(monthlyBurn) || monthlyBurn <= 0) return { runwayMonths: null, runwayDate: null, factorDecimal, monthlyBurn };
-    if(BH <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
+    if(BH == null || !Number.isFinite(Number(BH)) || Number(BH) <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
 
-    const runwayMonths = BH / monthlyBurn;
+    const runwayMonths = Number(BH) / monthlyBurn;
     if(!Number.isFinite(runwayMonths) || runwayMonths <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
 
     const today = new Date();
@@ -108,53 +110,47 @@ export function initMetrics(mountEl, opts = {}){
     return { runwayMonths, runwayDate, factorDecimal, monthlyBurn };
   }
 
-  function escapeHtml(s){
-    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
-      .replace(/\"/g,"&quot;").replace(/'/g,"&#039;");
-  }
-
   function renderHoursUtil(hours){
-    const AH = (hours?.AH == null) ? null : Math.max(0, Number(hours.AH));
-    const TCH = (hours?.TCH == null) ? null : Math.max(0, Number(hours.TCH));
-    const BH = (hours?.BH == null) ? null : Number(hours.BH);
+    const AH = (hours && Number.isFinite(Number(hours.AH))) ? Number(hours.AH) : null;
+    const TCH = (hours && Number.isFinite(Number(hours.TCH))) ? Number(hours.TCH) : null;
+    const BH = (hours && Number.isFinite(Number(hours.BH))) ? Number(hours.BH) : null;
 
-    const hasAny = (AH != null) || (TCH != null) || (BH != null);
-
-    if(!hasAny){
+    // If nothing is present
+    if(AH == null && TCH == null && BH == null){
       elHoursBar.innerHTML = `
         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
           <span class="pill">AH: /</span>
           <span class="pill">TCH: /</span>
           <span class="pill">BH: /</span>
         </div>
-        <div class="note">/</div>
+        <div class="note">No hours data.</div>
       `;
       return;
     }
 
-    // Render bar using numeric fallbacks (so layout stays stable)
-    const a = (AH == null) ? 0 : AH;
-    const t = (TCH == null) ? 0 : TCH;
+    const AHc = Math.max(0, Number(AH ?? 0));
+    const TCHc = Math.max(0, Number(TCH ?? 0));
+    const BHc = (BH == null ? (AH != null && TCH != null ? (AH - TCH) : 0) : BH);
 
-    const exceed = Math.max(0, t - a);
-    const within = Math.min(a, t);
+    const exceed = Math.max(0, TCHc - AHc);
+    const within = Math.min(AHc, TCHc);
 
-    const base = Math.max(a, 1);
+    const base = Math.max(AHc, 1);
     const extraCap = base * 0.35;
     const shownExtra = Math.min(exceed, extraCap);
     const totalScale = base + shownExtra;
 
     const withinPct = (within / totalScale) * 100;
-    const basePct = (a / totalScale) * 100;
+    const basePct = (AHc / totalScale) * 100;
     const exceedPct = (shownExtra / totalScale) * 100;
 
     const insideLabel = (pct)=> pct >= 14;
 
     elHoursBar.innerHTML = `
       <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
-        <span class="pill">AH: ${escapeHtml(fmt(AH,1))}</span>
-        <span class="pill">TCH: ${escapeHtml(fmt(TCH,1))}</span>
-        <span class="pill">BH: ${escapeHtml(fmt(BH,1))}</span>
+        <span class="pill">AH: ${escapeHtml(fmtNum(AH, 0))}</span>
+        <span class="pill">TCH: ${escapeHtml(fmtNum(TCH, 0))}</span>
+        <span class="pill">BH: ${escapeHtml(fmtNum(BHc, 0))}</span>
       </div>
 
       <div style="
@@ -176,8 +172,8 @@ export function initMetrics(mountEl, opts = {}){
           justify-content:${insideLabel(withinPct) ? "center" : "flex-start"};
         ">
           ${insideLabel(withinPct)
-            ? `<span style="font-size:11px; color:rgba(255,255,255,0.95); padding:0 8px; white-space:nowrap;">${escapeHtml(fmt(within,1))}</span>`
-            : `<span style="position:absolute; left:calc(${withinPct}% + 8px); font-size:11px; color:rgba(255,255,255,0.85); white-space:nowrap;">${escapeHtml(fmt(within,1))}</span>`
+            ? `<span style="font-size:11px; color:rgba(255,255,255,0.95); padding:0 8px; white-space:nowrap;">${fmtNum(within, 0)}</span>`
+            : `<span style="position:absolute; left:calc(${withinPct}% + 8px); font-size:11px; color:rgba(255,255,255,0.85); white-space:nowrap;">${fmtNum(within, 0)}</span>`
           }
         </div>
 
@@ -199,8 +195,8 @@ export function initMetrics(mountEl, opts = {}){
             justify-content:${insideLabel(exceedPct) ? "center" : "flex-start"};
           ">
             ${insideLabel(exceedPct)
-              ? `<span style="font-size:11px; color:rgba(255,255,255,0.95); padding:0 8px; white-space:nowrap;">+${escapeHtml(fmt(exceed,1))}</span>`
-              : `<span style="position:absolute; left:calc(${basePct + exceedPct}% + 8px); font-size:11px; color:rgba(255,255,255,0.85); white-space:nowrap;">+${escapeHtml(fmt(exceed,1))}</span>`
+              ? `<span style="font-size:11px; color:rgba(255,255,255,0.95); padding:0 8px; white-space:nowrap;">+${fmtNum(exceed, 0)}</span>`
+              : `<span style="position:absolute; left:calc(${basePct + exceedPct}% + 8px); font-size:11px; color:rgba(255,255,255,0.85); white-space:nowrap;">+${fmtNum(exceed, 0)}</span>`
             }
           </div>
         ` : ``}
@@ -212,46 +208,20 @@ export function initMetrics(mountEl, opts = {}){
     if(chart){ chart.destroy(); chart=null; }
   }
 
-  function renderDeploymentChart(people, deploymentNames){
+  function renderDeploymentChart(people){
     destroyChart();
 
-    const numeric = (people || []).filter(p => Number.isFinite(p.pct) && p.pct > 0);
-    const namesOnly = (deploymentNames || []).filter(Boolean);
-
-    if(!numeric.length){
-      // No numeric % data — show names if present
-      const items = namesOnly.length ? namesOnly : [];
-      if(!items.length){
-        elDeployLegend.innerHTML = `<div class="note">/</div>`;
-        return;
-      }
-      elDeployLegend.innerHTML = items.map(n=>`
-        <div style="
-          display:flex; align-items:center; justify-content:space-between; gap:10px;
-          padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.06);
-          font-size:12px;
-        ">
-          <div style="display:flex; align-items:center; gap:8px; min-width:0;">
-            <span style="width:10px; height:10px; border-radius:3px; border:1px solid rgba(255,255,255,0.20); background:rgba(255,255,255,0.25);"></span>
-            <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px;">${escapeHtml(n)}</span>
-          </div>
-          <div style="color:var(--muted); flex:0 0 auto;">/</div>
-        </div>
-      `).join("");
-      return;
-    }
-
-    const top = numeric.slice(0, 12);
+    const top = (people || []).slice(0, 12);
     const total = top.reduce((s,p)=>s+p.pct, 0);
 
     const labels = top.map(p=>p.name);
     const values = top.map(p=>p.pct);
 
     const remainder = 100 - total;
-    if(remainder > 0){
+    if(remainder > 0 && labels.length){
       labels.push("Unallocated");
       values.push(remainder);
-    } else if(remainder < 0){
+    } else if(remainder < 0 && labels.length){
       labels.push("Over-allocated");
       values.push(Math.abs(remainder));
     }
@@ -262,6 +232,11 @@ export function initMetrics(mountEl, opts = {}){
     }
 
     const canvas = mountEl.querySelector("#deployChart");
+    if(!labels.length){
+      elDeployLegend.innerHTML = `<div class="note">No deployment data (need Name(xx%) format).</div>`;
+      return;
+    }
+
     chart = new Chart(canvas, {
       type:"doughnut",
       data:{ labels, datasets:[{ data: values }]},
@@ -300,75 +275,78 @@ export function initMetrics(mountEl, opts = {}){
     const pill = (txt)=>`<span class="pill">${escapeHtml(txt)}</span>`;
     const parts = [];
     parts.push(pill(`Factor: ${Number.isFinite(factor) ? factor.toFixed(2) : "/"}`));
-    parts.push(pill(`Burn/mo: ${Number.isFinite(burn) ? burn.toFixed(1) : "/"}`));
-
-    if(rm == null) parts.push(pill(`Runway: /`));
-    else parts.push(pill(`Runway: ${rm.toFixed(1)} mo`));
+    parts.push(pill(`Monthly: ${Number.isFinite(burn) ? burn.toFixed(1) : "/"} hrs`));
+    parts.push(pill(`Runway: ${rm == null ? "/" : rm.toFixed(2) + " mo"}`));
 
     elRunwaySummary.innerHTML = parts.join("");
   }
 
-  function renderSimList(){
+  function renderSimulatorList(){
     if(!simPeople.length){
-      elSimList.innerHTML = `<div class="note" style="padding:10px;">/</div>`;
+      elSimList.innerHTML = `<div style="padding:10px;" class="note">No editable deployment entries (need Name (xx%) format).</div>`;
       return;
     }
 
-    elSimList.innerHTML = `
-      <table style="width:100%; border-collapse:collapse; font-size:12px;">
-        <thead>
-          <tr>
-            <th style="text-align:left; padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.06); color:var(--muted);">Name</th>
-            <th style="text-align:right; padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.06); color:var(--muted);">%</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${simPeople.map((p, idx)=>`
-            <tr>
-              <td style="padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.06);">${escapeHtml(p.name)}</td>
-              <td style="padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.06); text-align:right;">
-                <input data-idx="${idx}" type="number" min="0" max="100" step="0.5" value="${Number(p.pct).toFixed(1)}"
-                  style="width:90px; text-align:right; background:#0f172a; border:1px solid rgba(255,255,255,0.10); color:var(--text); border-radius:10px; padding:6px 8px;" />
-              </td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    `;
+    elSimList.innerHTML = simPeople.map((p, idx)=>`
+      <div style="
+        display:flex; align-items:center; justify-content:space-between; gap:10px;
+        padding:10px 12px;
+        border-bottom:1px solid rgba(255,255,255,0.06);
+      ">
+        <div style="min-width:0;">
+          <div style="font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:240px;">${escapeHtml(p.name)}</div>
+          <div style="font-size:11px; color:var(--muted); margin-top:2px;">Absolute %</div>
+        </div>
 
-    elSimList.querySelectorAll("input[type=number]").forEach(inp=>{
+        <div style="display:flex; align-items:center; gap:8px; flex:0 0 auto;">
+          <input data-idx="${idx}" type="number" min="0" step="0.1" value="${Number(p.pct||0)}" style="
+            width:100px;
+            background:#0f172a; border:1px solid rgba(255,255,255,0.12);
+            color:rgba(255,255,255,0.92);
+            border-radius:12px; padding:8px 10px;
+          " />
+          <span class="pill">%</span>
+        </div>
+      </div>
+    `).join("");
+
+    for(const inp of elSimList.querySelectorAll("input[type=number]")){
       inp.addEventListener("input", ()=>{
-        const idx = Number(inp.dataset.idx || 0);
-        const v = Number(inp.value || 0);
-        simPeople[idx].pct = Math.max(0, Math.min(100, v));
-        const runway = computeRunway(simPeople, Number(state.hours?.BH));
+        const idx = Number(inp.dataset.idx);
+        const v = Number(inp.value);
+        simPeople[idx].pct = Number.isFinite(v) ? Math.max(0, v) : 0;
+
+        const runway = computeRunway(simPeople, state.hours.BH);
         renderRunwaySummary(runway);
         onRunwaySimulated(runway);
       });
-    });
-  }
-
-  function setData(next){
-    state = { ...state, ...next };
-    baselinePeople = (state.people || []).map(p=>({ ...p }));
-    simPeople = baselinePeople.map(p=>({ ...p }));
-
-    renderHoursUtil(state.hours);
-    renderDeploymentChart(state.people, state.deploymentNames);
-    const runway = state.runway || computeRunway(state.people, Number(state.hours?.BH));
-    renderRunwaySummary(runway);
-    renderSimList();
+    }
   }
 
   elReset.onclick = ()=>{
     simPeople = baselinePeople.map(p=>({ ...p }));
-    renderSimList();
-    const runway = computeRunway(simPeople, Number(state.hours?.BH));
+    const runway = computeRunway(simPeople, state.hours.BH);
     renderRunwaySummary(runway);
+    renderSimulatorList();
     onRunwaySimulated(runway);
   };
 
-  // init empty
-  setData(state);
+  function setData(next){
+    state = { ...state, ...next };
+
+    renderHoursUtil(state.hours);
+
+    baselinePeople = (state.people || []).map(p=>({ name:p.name, pct:Number(p.pct||0) }));
+    simPeople = baselinePeople.map(p=>({ ...p }));
+
+    renderDeploymentChart(baselinePeople);
+
+    const runway = computeRunway(simPeople, state.hours.BH);
+    renderRunwaySummary(runway);
+    renderSimulatorList();
+
+    onRunwaySimulated(runway);
+  }
+
   return { setData };
 }
