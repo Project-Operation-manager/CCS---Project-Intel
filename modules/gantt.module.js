@@ -1,39 +1,45 @@
 export function initGantt(mountEl, opts = {}){
   const WINDOW_WEEKS = 52;
   const WINDOW_DAYS = WINDOW_WEEKS * 7;
-  const SLIDER_STEP_DAYS = 28; // 4 weeks
 
   const fmtWindow = opts.fmtWindow || ((a,b)=>`${a.toISOString().slice(0,10)} → ${b.toISOString().slice(0,10)}`);
 
   let state = {
     title: "Select a project",
-    projectPP: null, // number | null
-    stages: [],       // array of stage objects
-    runwayDate: null  // Date | null
+    projectPP: null,
+    stages: [],
+    runwayDate: null
   };
 
   let ganttMinDate = null;
   let ganttMaxStart = 0;
   let ganttOffset = 0;
 
+  // Drag state
+  let isDragging = false;
+  let dragStartX = 0;
+  let dragStartOffset = 0;
+  let dragRaf = 0;
+  let pendingOffset = null;
+
   mountEl.innerHTML = `
     <style>
       .ganttTopRow{
         display:flex; align-items:center; justify-content:space-between; gap:10px;
-        margin-bottom:10px; flex-wrap:wrap;
+        margin-bottom:10px;
+        flex-wrap:wrap;
       }
-      .ganttTitle{ display:flex; align-items:baseline; gap:10px; min-width:240px; max-width: 55%; }
+      .ganttTitle{ display:flex; align-items:baseline; gap:10px; min-width:240px; max-width: 60%; }
       .ganttTitle b{
         font-size:14px; font-weight:700; color:var(--text);
         white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-        max-width: 520px;
+        max-width: 640px;
       }
 
       .ganttControlsRow{
         display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end;
         flex:1 1 auto;
       }
-      input[type="range"]{ width:min(420px, 100%); accent-color:#9fb0d0; }
 
       .legend{
         display:flex; align-items:center; gap:10px;
@@ -46,13 +52,19 @@ export function initGantt(mountEl, opts = {}){
       .sw{ width:10px; height:10px; border-radius:4px; border:1px solid rgba(255,255,255,0.18); }
 
       .ganttOuter{ border:1px solid var(--grid); border-radius:12px; overflow:hidden; background: rgba(0,0,0,0.08); }
-      .ganttScroll{ max-height: calc(100vh - 260px); min-height: 560px; overflow:auto; }
+      .ganttScroll{
+        max-height: calc(100vh - 260px);
+        min-height: 560px;
+        overflow:auto;
+        cursor: grab;
+      }
+      .ganttScroll.dragging{ cursor: grabbing; user-select:none; }
 
       .ganttGrid{
         display:grid;
-        grid-template-columns: 420px 1fr;
+        grid-template-columns: 520px 1fr;
         align-items:stretch;
-        min-width: 1040px;
+        min-width: 1100px;
         width:100%;
       }
       .gHeadL, .gHeadR{
@@ -66,19 +78,22 @@ export function initGantt(mountEl, opts = {}){
         background: rgba(18,27,47,0.98);
         border-bottom:1px solid var(--grid);
       }
-      .gHeadL{ left:0; z-index: 30; border-right:1px solid var(--grid); padding:0 12px; display:flex; align-items:center; gap:10px; }
-      .gHeadL b{ font-size:12px; color:var(--muted); font-weight:600; white-space:nowrap; }
+      .gHeadL{ left:0; z-index: 30; border-right:1px solid var(--grid); padding:0 12px; display:flex; align-items:center; }
+      .gHeadL b{ font-size:12px; color:var(--muted); font-weight:600; }
 
       .headStack{ width:100%; display:flex; flex-direction:column; }
       .qRow, .mRow{
         display:flex; width:100%;
         font-size:11px; color:var(--muted);
-        user-select:none; line-height:1;
+        user-select:none;
+        line-height:1;
       }
       .qSeg, .mSeg{
         border-left:1px solid rgba(255,255,255,0.06);
         padding:6px 8px;
-        white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
       }
       .qSeg{ color: rgba(255,255,255,0.65); font-weight:600; padding-top:8px; padding-bottom:5px; }
       .mSeg{ padding-top:5px; padding-bottom:8px; }
@@ -98,13 +113,12 @@ export function initGantt(mountEl, opts = {}){
       }
       .gCellL:nth-of-type(4n+1){ background: rgba(255,255,255,0.02); }
 
-      .leftMain{ display:flex; align-items:center; gap:10px; min-width:0; width:100%; }
-      .stageName{ font-size:12px; width:56px; flex:0 0 56px; color:var(--text); }
+      .leftMain{ display:flex; align-items:center; gap:10px; min-width:0; flex:1 1 auto; }
+      .stageName{ font-size:12px; width:64px; flex:0 0 64px; color:var(--text); }
 
-      .colNum{ font-size:12px; color:rgba(255,255,255,0.84); text-align:right; white-space:nowrap; }
-      .deliv{ width:70px; flex:0 0 70px; }
-      .hrs{ width:96px; flex:0 0 96px; }
-      .stat{ width:70px; flex:0 0 70px; text-align:center; }
+      .colDel{ font-size:12px; color:rgba(255,255,255,0.80); width:72px; flex:0 0 72px; text-align:right; }
+      .colHrs{ font-size:12px; color:rgba(255,255,255,0.78); width:110px; flex:0 0 110px; text-align:right; }
+      .colStatus{ font-size:11px; color:rgba(255,255,255,0.78); width:110px; flex:0 0 110px; text-align:right; }
 
       .alert{
         font-size:11px;
@@ -119,6 +133,17 @@ export function initGantt(mountEl, opts = {}){
       .alert.ok{ color: var(--ok); border-color: rgba(139,255,178,0.35); }
       .alert.bad{ color: var(--bad); border-color: rgba(255,122,122,0.35); }
       .alert.warn{ color: var(--warn); border-color: rgba(255,209,138,0.35); }
+
+      .ppCircle{
+        width:38px; height:38px; border-radius:999px;
+        display:flex; align-items:center; justify-content:center;
+        font-size:12px;
+        color: rgba(255,255,255,0.95);
+        border:1px solid rgba(255,255,255,0.18);
+        background: rgba(0,0,0,0.18);
+        flex:0 0 auto;
+      }
+      .ppCircle span{ font-variant-numeric: tabular-nums; }
 
       .gCellR{
         height: var(--rowh);
@@ -200,6 +225,12 @@ export function initGantt(mountEl, opts = {}){
         white-space:nowrap;
       }
       .vtag.runway{ color: var(--warn); border-color: rgba(255,209,138,0.30); }
+
+      .hint{
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 8px;
+      }
     </style>
 
     <div class="ganttTopRow">
@@ -208,8 +239,7 @@ export function initGantt(mountEl, opts = {}){
       </div>
 
       <div class="ganttControlsRow">
-        <input id="gSlider" type="range" min="0" max="0" value="0" step="${SLIDER_STEP_DAYS}" disabled />
-        <span id="gWindow" class="pill">/</span>
+        <span id="gWindow" class="pill">—</span>
 
         <div class="legend" title="Stage colors by discipline">
           <div class="legItem"><span class="sw" style="background:var(--arch)"></span>Architecture</div>
@@ -220,26 +250,20 @@ export function initGantt(mountEl, opts = {}){
     </div>
 
     <div class="ganttOuter">
-      <div class="ganttScroll">
+      <div id="gScroll" class="ganttScroll" title="Drag with left mouse button to pan timeline">
         <div id="gGrid" class="ganttGrid"></div>
       </div>
     </div>
 
+    <div class="hint">Tip: press and drag left/right on the timeline to move the window.</div>
     <div class="note" id="gMsg"></div>
   `;
 
   const elTitle = mountEl.querySelector("#gTitle");
-  const elSlider = mountEl.querySelector("#gSlider");
   const elWindow = mountEl.querySelector("#gWindow");
   const elGrid = mountEl.querySelector("#gGrid");
   const elMsg = mountEl.querySelector("#gMsg");
-
-  elSlider.oninput = ()=>{
-    ganttOffset = Number(elSlider.value || 0);
-    ganttOffset = Math.round(ganttOffset / SLIDER_STEP_DAYS) * SLIDER_STEP_DAYS;
-    elSlider.value = String(ganttOffset);
-    render();
-  };
+  const elScroll = mountEl.querySelector("#gScroll");
 
   function monthShort(d){ return d.toLocaleString(undefined, { month:"short" }); }
 
@@ -254,14 +278,17 @@ export function initGantt(mountEl, opts = {}){
 
   function buildMonthSegments(windowStart, windowEnd){
     const segs=[];
-    let cur = new Date(windowStart.getFullYear(), windowStart.getMonth(), 1);
-    while(cur < windowEnd){
-      const next = new Date(cur.getFullYear(), cur.getMonth()+1, 1);
-      const start = (cur < windowStart) ? windowStart : cur;
-      const end = (next > windowEnd) ? windowEnd : next;
-      const days = Math.max(1, Math.round((end - start)/86400000));
-      segs.push({ label: `${monthShort(cur)} ${cur.getFullYear()}`, days, q: fiscalQuarter(cur) });
-      cur = next;
+    let segStart = new Date(windowStart);
+    while(segStart < windowEnd){
+      const nextMonth = new Date(segStart.getFullYear(), segStart.getMonth()+1, 1);
+      const segEnd = nextMonth < windowEnd ? nextMonth : windowEnd;
+      const days = Math.max(1, Math.round((segEnd - segStart)/86400000));
+      segs.push({
+        label: `${monthShort(segStart)} ${segStart.getFullYear()}`,
+        days,
+        q: fiscalQuarter(segStart)
+      });
+      segStart = segEnd;
     }
     return segs;
   }
@@ -284,7 +311,7 @@ export function initGantt(mountEl, opts = {}){
 
     if(state.runwayDate instanceof Date && !isNaN(state.runwayDate)) dates.push(state.runwayDate);
 
-    for(const s of state.stages){
+    for(const s of (state.stages || [])){
       if(s.start instanceof Date && !isNaN(s.start)) dates.push(s.start);
       if(s.end instanceof Date && !isNaN(s.end)) dates.push(s.end);
       if(s.extEnd instanceof Date && !isNaN(s.extEnd)) dates.push(s.extEnd);
@@ -297,7 +324,7 @@ export function initGantt(mountEl, opts = {}){
   }
 
   function setWindowLabel(windowStart){
-    if(!windowStart){ elWindow.textContent = "/"; return; }
+    if(!windowStart){ elWindow.textContent = "—"; return; }
     const windowEnd = new Date(windowStart.getTime() + WINDOW_DAYS*86400000);
     elWindow.textContent = fmtWindow(windowStart, windowEnd);
   }
@@ -327,15 +354,15 @@ export function initGantt(mountEl, opts = {}){
       .replace(/\"/g,"&quot;").replace(/'/g,"&#039;");
   }
 
-  function fmtNumOrSlash(v, maxFrac = 0){
-    if(v == null || !Number.isFinite(Number(v))) return "/";
-    return new Intl.NumberFormat(undefined, { maximumFractionDigits: maxFrac }).format(Number(v));
+  function fmtNumOrSlash(n){
+    if(n == null || !Number.isFinite(Number(n))) return "/";
+    return new Intl.NumberFormat(undefined,{maximumFractionDigits:0}).format(Number(n));
   }
 
-  function fmtStatus(s){
-    const raw = String(s || "").trim();
-    if(raw) return raw;
-    return "/";
+  function fmtPctOrSlash(n){
+    const v = safePct(n);
+    if(v == null) return "/";
+    return `${Math.round(v)}%`;
   }
 
   function appendLines(lane, windowStart, windowEnd){
@@ -373,10 +400,10 @@ export function initGantt(mountEl, opts = {}){
     elGrid.innerHTML = "";
 
     if(!state.stages || !state.stages.length){
-      elMsg.textContent = "Upload a file (or auto-load), pick a project, and your timeline will appear here.";
+      elMsg.textContent = "No timeline data for this selection.";
       ganttMinDate = null;
-      elSlider.disabled = true;
-      elSlider.min = "0"; elSlider.max = "0"; elSlider.value = "0";
+      ganttMaxStart = 0;
+      ganttOffset = 0;
       setWindowLabel(null);
       return;
     }
@@ -385,17 +412,10 @@ export function initGantt(mountEl, opts = {}){
     ganttMinDate = min;
 
     const totalSpan = Math.max(0, daysBetween(min, max));
-    let maxStart = Math.max(0, totalSpan - WINDOW_DAYS);
-    maxStart = Math.floor(maxStart / SLIDER_STEP_DAYS) * SLIDER_STEP_DAYS;
-    ganttMaxStart = maxStart;
-
-    elSlider.min = "0";
-    elSlider.max = String(ganttMaxStart);
-    elSlider.step = String(SLIDER_STEP_DAYS);
+    ganttMaxStart = Math.max(0, totalSpan - WINDOW_DAYS);
 
     if(ganttOffset > ganttMaxStart) ganttOffset = ganttMaxStart;
-    elSlider.value = String(ganttOffset);
-    elSlider.disabled = ganttMaxStart <= 0;
+    if(ganttOffset < 0) ganttOffset = 0;
 
     const windowStart = new Date(ganttMinDate.getTime() + ganttOffset*86400000);
     const windowEnd = new Date(windowStart.getTime() + WINDOW_DAYS*86400000);
@@ -409,11 +429,11 @@ export function initGantt(mountEl, opts = {}){
     const headL = document.createElement("div");
     headL.className = "gHeadL";
     headL.innerHTML = `
-      <b style="width:56px;">Stage</b>
-      <b style="width:70px; text-align:right;">Deliv.</b>
-      <b style="width:96px; text-align:right;">Hrs A/C</b>
-      <b style="width:70px; text-align:center;">Status</b>
-      <b style="margin-left:auto;">Alert</b>
+      <b style="width:64px;">Stage</b>
+      <b style="width:72px; text-align:right;">Del</b>
+      <b style="width:110px; text-align:right;">Hrs A/C</b>
+      <b style="width:110px; text-align:right;">Status</b>
+      <b style="margin-left:auto;">Alert / PP</b>
     `;
 
     const headR = document.createElement("div");
@@ -453,18 +473,16 @@ export function initGantt(mountEl, opts = {}){
     {
       const left = document.createElement("div");
       left.className = "gCellL";
-
       const pp = safePct(state.projectPP);
-      const ppText = (pp == null) ? "/" : `${Math.round(pp)}%`;
-
       left.innerHTML = `
         <div class="leftMain">
           <div class="stageName">PP</div>
-          <div class="colNum deliv">/</div>
-          <div class="colNum hrs">/</div>
-          <div class="colNum stat">${escapeHtml(ppText)}</div>
-          <div style="margin-left:auto;">
-            <div class="alert" title="Project progress row">Project</div>
+          <div class="colDel">/</div>
+          <div class="colHrs">/</div>
+          <div class="colStatus">/</div>
+          <div style="display:flex; gap:10px; align-items:center; margin-left:auto;">
+            <div class="alert" title="Project progress shown on timeline">Project</div>
+            <div class="ppCircle" title="Project progress">${pp == null ? "/" : `<span>${Math.round(pp)}%</span>`}</div>
           </div>
         </div>
       `;
@@ -523,27 +541,29 @@ export function initGantt(mountEl, opts = {}){
       const left = document.createElement("div");
       left.className = "gCellL";
 
-      const delText = fmtNumOrSlash(s.deliverables, 0);
-      const hrsText = (s.allocated == null && s.consumed == null)
-        ? "/"
-        : `${fmtNumOrSlash(s.allocated, 0)}/${fmtNumOrSlash(s.consumed, 0)}`;
+      const delText = fmtNumOrSlash(s.deliverables);
+      const hrsText = `${fmtNumOrSlash(s.allocated)}/${fmtNumOrSlash(s.consumed)}`;
+      const statusText = s.status ? s.status : "/";
 
       const pp = safePct(s.stagePP);
-      const statusText = s.statusText ? s.statusText : (pp == null ? "/" : `${Math.round(pp)}%`);
-
       const alertKind = s.alert?.kind || "";
       const alertText = s.alert?.text || "";
+
       const alertHtml = alertText
         ? `<div class="alert ${alertKind}">${escapeHtml(alertText)}</div>`
-        : `<div class="alert" style="opacity:.45;">/</div>`;
+        : `<div class="alert" style="opacity:.35;">/</div>`;
 
       left.innerHTML = `
-        <div class="leftMain">
+        <div class="leftMain" title="${escapeHtml(`${s.label} • Del ${delText} • Hrs ${hrsText} • ${statusText} • PP ${fmtPctOrSlash(pp)}`)}">
           <div class="stageName">${escapeHtml(s.label)}</div>
-          <div class="colNum deliv" title="Deliverables">${escapeHtml(delText)}</div>
-          <div class="colNum hrs" title="Allocated / Consumed hours">${escapeHtml(hrsText)}</div>
-          <div class="colNum stat" title="Status Progress">${escapeHtml(fmtStatus(statusText))}</div>
-          <div style="margin-left:auto;">${alertHtml}</div>
+          <div class="colDel" title="Deliverables">${escapeHtml(delText)}</div>
+          <div class="colHrs" title="Allocated / Consumed hours">${escapeHtml(hrsText)}</div>
+          <div class="colStatus" title="Status (derived from Status Progress)">${escapeHtml(statusText)}</div>
+
+          <div style="display:flex; align-items:center; gap:10px; margin-left:auto;">
+            ${alertHtml}
+            <div class="ppCircle" title="Stage status progress">${pp == null ? "/" : `<span>${Math.round(pp)}%</span>`}</div>
+          </div>
         </div>
       `;
 
@@ -556,7 +576,6 @@ export function initGantt(mountEl, opts = {}){
 
       appendLines(lane, windowStart, windowEnd);
 
-      // Timeline bar
       if(s.start || s.end){
         const a = s.start || s.end;
         const b = s.end || s.start;
@@ -576,22 +595,13 @@ export function initGantt(mountEl, opts = {}){
         bar.className = "bar";
         bar.style.left = `${leftPct}%`;
         bar.style.width = `${widthPct}%`;
-        bar.title = [
-          `Stage: ${s.label}`,
-          `Start: ${s.start instanceof Date && !isNaN(s.start) ? s.start.toDateString() : "/"}`,
-          `End: ${s.end instanceof Date && !isNaN(s.end) ? s.end.toDateString() : "/"}`,
-          `Ext: ${s.extEnd instanceof Date && !isNaN(s.extEnd) ? s.extEnd.toDateString() : "/"}`,
-          `Deliverables: ${delText}`,
-          `Hours A/C: ${hrsText}`,
-          `Status: ${fmtStatus(statusText)}`
-        ].join("\n");
 
         const inner = document.createElement("div");
         inner.className = "barInner";
         inner.style.background = disciplineVar(s.discipline);
         bar.appendChild(inner);
 
-        // Extension hatch from planned end -> ext end
+        // Ext hatch from planned end -> ext end
         if(s.extEnd instanceof Date && !isNaN(s.extEnd) && s.end instanceof Date && !isNaN(s.end)){
           if(s.extEnd.getTime() > s.end.getTime()){
             const extStartOff = (s.end - windowStart) / 86400000;
@@ -627,6 +637,58 @@ export function initGantt(mountEl, opts = {}){
       elGrid.appendChild(right);
     }
   }
+
+  // --- drag pan handling ---
+  function clampOffset(v){
+    if(!Number.isFinite(v)) return 0;
+    return Math.max(0, Math.min(ganttMaxStart, v));
+  }
+
+  function scheduleOffsetRender(nextOffset){
+    pendingOffset = clampOffset(nextOffset);
+    if(dragRaf) return;
+    dragRaf = requestAnimationFrame(()=>{
+      dragRaf = 0;
+      if(pendingOffset == null) return;
+      ganttOffset = pendingOffset;
+      pendingOffset = null;
+      render();
+    });
+  }
+
+  function onMouseDown(e){
+    if(e.button !== 0) return;
+    isDragging = true;
+    dragStartX = e.clientX;
+    dragStartOffset = ganttOffset;
+    elScroll.classList.add("dragging");
+    e.preventDefault();
+  }
+
+  function onMouseMove(e){
+    if(!isDragging) return;
+
+    const gridRight = elGrid.querySelector(".gHeadR") || elGrid;
+    const rightW = (gridRight.getBoundingClientRect().width || 1);
+
+    const dx = e.clientX - dragStartX;
+    const daysPerPx = WINDOW_DAYS / rightW;
+
+    // Drag left => later => increase offset
+    const nextOffset = dragStartOffset - (dx * daysPerPx);
+    scheduleOffsetRender(nextOffset);
+  }
+
+  function stopDrag(){
+    if(!isDragging) return;
+    isDragging = false;
+    elScroll.classList.remove("dragging");
+  }
+
+  elScroll.addEventListener("mousedown", onMouseDown);
+  window.addEventListener("mousemove", onMouseMove);
+  window.addEventListener("mouseup", stopDrag);
+  window.addEventListener("blur", stopDrag);
 
   function setData(next){
     state = { ...state, ...next };
