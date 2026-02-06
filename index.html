@@ -44,11 +44,6 @@
       font-size:20px;
       letter-spacing:0.2px;
     }
-    .brand .sub{
-      margin-top:6px;
-      font-size:12px;
-      color: var(--muted);
-    }
 
     .controls{
       display:flex;
@@ -57,7 +52,7 @@
       align-items:center;
       justify-content:flex-end;
       flex: 1 1 auto;
-      max-width: 980px;
+      max-width: 1100px;
     }
 
     .pill{
@@ -66,11 +61,12 @@
       white-space:nowrap;
     }
 
-    input[type="text"]{
+    input[type="text"], select{
       background:#0f172a; border:1px solid var(--grid); color:var(--text);
       border-radius:12px; padding:10px 10px; outline:none;
-      min-width: 320px;
+      min-width: 260px;
     }
+    select{ min-width: 220px; }
 
     label{ font-size:12px; color:var(--muted); display:flex; align-items:center; gap:8px; }
     input[type="file"]{ color:var(--muted); }
@@ -124,11 +120,14 @@
   <div class="top">
     <div class="brand">
       <h1>Project Intel</h1>
-      <div class="sub">Landing page • click a project to open the dashboard</div>
     </div>
 
     <div class="controls">
       <input id="search" type="text" placeholder="Search projects…" />
+
+      <select id="projectSelect">
+        <option value="">Select project…</option>
+      </select>
 
       <label>
         <span class="pill">Upload</span>
