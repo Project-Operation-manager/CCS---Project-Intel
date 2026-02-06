@@ -7,9 +7,9 @@ export function initGantt(mountEl, opts = {}){
 
   let state = {
     title: "Select a project",
-    projectPP: null,
-    stages: [],
-    runwayDate: null
+    projectPP: null, // number | null
+    stages: [],       // array of stage objects
+    runwayDate: null  // Date | null
   };
 
   let ganttMinDate = null;
@@ -20,8 +20,7 @@ export function initGantt(mountEl, opts = {}){
     <style>
       .ganttTopRow{
         display:flex; align-items:center; justify-content:space-between; gap:10px;
-        margin-bottom:10px;
-        flex-wrap:wrap;
+        margin-bottom:10px; flex-wrap:wrap;
       }
       .ganttTitle{ display:flex; align-items:baseline; gap:10px; min-width:240px; max-width: 55%; }
       .ganttTitle b{
@@ -51,9 +50,9 @@ export function initGantt(mountEl, opts = {}){
 
       .ganttGrid{
         display:grid;
-        grid-template-columns: 460px 1fr;
+        grid-template-columns: 420px 1fr;
         align-items:stretch;
-        min-width: 980px;
+        min-width: 1040px;
         width:100%;
       }
       .gHeadL, .gHeadR{
@@ -67,22 +66,19 @@ export function initGantt(mountEl, opts = {}){
         background: rgba(18,27,47,0.98);
         border-bottom:1px solid var(--grid);
       }
-      .gHeadL{ left:0; z-index: 30; border-right:1px solid var(--grid); padding:0 12px; display:flex; align-items:center; }
-      .gHeadL b{ font-size:12px; color:var(--muted); font-weight:600; }
+      .gHeadL{ left:0; z-index: 30; border-right:1px solid var(--grid); padding:0 12px; display:flex; align-items:center; gap:10px; }
+      .gHeadL b{ font-size:12px; color:var(--muted); font-weight:600; white-space:nowrap; }
 
       .headStack{ width:100%; display:flex; flex-direction:column; }
       .qRow, .mRow{
         display:flex; width:100%;
         font-size:11px; color:var(--muted);
-        user-select:none;
-        line-height:1;
+        user-select:none; line-height:1;
       }
       .qSeg, .mSeg{
         border-left:1px solid rgba(255,255,255,0.06);
         padding:6px 8px;
-        white-space:nowrap;
-        overflow:hidden;
-        text-overflow:ellipsis;
+        white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
       }
       .qSeg{ color: rgba(255,255,255,0.65); font-weight:600; padding-top:8px; padding-bottom:5px; }
       .mSeg{ padding-top:5px; padding-bottom:8px; }
@@ -102,11 +98,13 @@ export function initGantt(mountEl, opts = {}){
       }
       .gCellL:nth-of-type(4n+1){ background: rgba(255,255,255,0.02); }
 
-      .leftMain{ display:flex; align-items:center; gap:10px; min-width:0; flex:1 1 auto; }
-      .stageName{ font-size:12px; width:64px; flex:0 0 64px; color:var(--text); }
-      .deliver{ font-size:12px; color:rgba(255,255,255,0.80); width:60px; flex:0 0 60px; text-align:right; }
-      .hrs{ font-size:12px; color:rgba(255,255,255,0.80); width:110px; flex:0 0 110px; text-align:right; }
-      .stat{ font-size:12px; color:rgba(255,255,255,0.80); width:80px; flex:0 0 80px; text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .leftMain{ display:flex; align-items:center; gap:10px; min-width:0; width:100%; }
+      .stageName{ font-size:12px; width:56px; flex:0 0 56px; color:var(--text); }
+
+      .colNum{ font-size:12px; color:rgba(255,255,255,0.84); text-align:right; white-space:nowrap; }
+      .deliv{ width:70px; flex:0 0 70px; }
+      .hrs{ width:96px; flex:0 0 96px; }
+      .stat{ width:70px; flex:0 0 70px; text-align:center; }
 
       .alert{
         font-size:11px;
@@ -121,17 +119,6 @@ export function initGantt(mountEl, opts = {}){
       .alert.ok{ color: var(--ok); border-color: rgba(139,255,178,0.35); }
       .alert.bad{ color: var(--bad); border-color: rgba(255,122,122,0.35); }
       .alert.warn{ color: var(--warn); border-color: rgba(255,209,138,0.35); }
-
-      .ppCircle{
-        width:38px; height:38px; border-radius:999px;
-        display:flex; align-items:center; justify-content:center;
-        font-size:12px;
-        color: rgba(255,255,255,0.95);
-        border:1px solid rgba(255,255,255,0.18);
-        background: rgba(0,0,0,0.18);
-        flex:0 0 auto;
-      }
-      .ppCircle span{ font-variant-numeric: tabular-nums; }
 
       .gCellR{
         height: var(--rowh);
@@ -267,17 +254,14 @@ export function initGantt(mountEl, opts = {}){
 
   function buildMonthSegments(windowStart, windowEnd){
     const segs=[];
-    let segStart = new Date(windowStart);
-    while(segStart < windowEnd){
-      const nextMonth = new Date(segStart.getFullYear(), segStart.getMonth()+1, 1);
-      const segEnd = nextMonth < windowEnd ? nextMonth : windowEnd;
-      const days = Math.max(1, Math.round((segEnd - segStart)/86400000));
-      segs.push({
-        label: `${monthShort(segStart)} ${segStart.getFullYear()}`,
-        days,
-        q: fiscalQuarter(segStart)
-      });
-      segStart = segEnd;
+    let cur = new Date(windowStart.getFullYear(), windowStart.getMonth(), 1);
+    while(cur < windowEnd){
+      const next = new Date(cur.getFullYear(), cur.getMonth()+1, 1);
+      const start = (cur < windowStart) ? windowStart : cur;
+      const end = (next > windowEnd) ? windowEnd : next;
+      const days = Math.max(1, Math.round((end - start)/86400000));
+      segs.push({ label: `${monthShort(cur)} ${cur.getFullYear()}`, days, q: fiscalQuarter(cur) });
+      cur = next;
     }
     return segs;
   }
@@ -343,6 +327,17 @@ export function initGantt(mountEl, opts = {}){
       .replace(/\"/g,"&quot;").replace(/'/g,"&#039;");
   }
 
+  function fmtNumOrSlash(v, maxFrac = 0){
+    if(v == null || !Number.isFinite(Number(v))) return "/";
+    return new Intl.NumberFormat(undefined, { maximumFractionDigits: maxFrac }).format(Number(v));
+  }
+
+  function fmtStatus(s){
+    const raw = String(s || "").trim();
+    if(raw) return raw;
+    return "/";
+  }
+
   function appendLines(lane, windowStart, windowEnd){
     const today = new Date();
 
@@ -378,7 +373,7 @@ export function initGantt(mountEl, opts = {}){
     elGrid.innerHTML = "";
 
     if(!state.stages || !state.stages.length){
-      elMsg.textContent = "Upload a file, pick a project, and your timeline will appear here.";
+      elMsg.textContent = "Upload a file (or auto-load), pick a project, and your timeline will appear here.";
       ganttMinDate = null;
       elSlider.disabled = true;
       elSlider.min = "0"; elSlider.max = "0"; elSlider.value = "0";
@@ -414,11 +409,11 @@ export function initGantt(mountEl, opts = {}){
     const headL = document.createElement("div");
     headL.className = "gHeadL";
     headL.innerHTML = `
-      <b style="width:64px;">Stage</b>
-      <b style="width:60px; text-align:right;">Del.</b>
-      <b style="width:110px; text-align:right;">Hrs A/C</b>
-      <b style="width:80px; text-align:right;">Status</b>
-      <b style="margin-left:auto;">Alert / PP</b>
+      <b style="width:56px;">Stage</b>
+      <b style="width:70px; text-align:right;">Deliv.</b>
+      <b style="width:96px; text-align:right;">Hrs A/C</b>
+      <b style="width:70px; text-align:center;">Status</b>
+      <b style="margin-left:auto;">Alert</b>
     `;
 
     const headR = document.createElement("div");
@@ -443,7 +438,7 @@ export function initGantt(mountEl, opts = {}){
       const div = document.createElement("div");
       div.className = "mSeg";
       div.style.flex = String(seg.days);
-      div.textContent = seg.label; // "Oct 2026"
+      div.textContent = seg.label;
       mRow.appendChild(div);
     }
 
@@ -458,16 +453,18 @@ export function initGantt(mountEl, opts = {}){
     {
       const left = document.createElement("div");
       left.className = "gCellL";
+
       const pp = safePct(state.projectPP);
+      const ppText = (pp == null) ? "/" : `${Math.round(pp)}%`;
+
       left.innerHTML = `
         <div class="leftMain">
           <div class="stageName">PP</div>
-          <div class="deliver">/</div>
-          <div class="hrs">/</div>
-          <div class="stat">/</div>
-          <div style="display:flex; gap:10px; align-items:center; margin-left:auto;">
-            <div class="alert" title="Project progress shown on timeline">Project</div>
-            <div class="ppCircle" title="Project progress">${pp == null ? "/" : `<span>${Math.round(pp)}%</span>`}</div>
+          <div class="colNum deliv">/</div>
+          <div class="colNum hrs">/</div>
+          <div class="colNum stat">${escapeHtml(ppText)}</div>
+          <div style="margin-left:auto;">
+            <div class="alert" title="Project progress row">Project</div>
           </div>
         </div>
       `;
@@ -526,39 +523,27 @@ export function initGantt(mountEl, opts = {}){
       const left = document.createElement("div");
       left.className = "gCellL";
 
-      const delText = (s.deliverables == null || !Number.isFinite(s.deliverables))
+      const delText = fmtNumOrSlash(s.deliverables, 0);
+      const hrsText = (s.allocated == null && s.consumed == null)
         ? "/"
-        : String(s.deliverables);
-
-      const hrsText = (()=>{
-        const a = Number.isFinite(s.allocated) ? s.allocated : null;
-        const c = Number.isFinite(s.consumed) ? s.consumed : null;
-        if(a == null && c == null) return "/";
-        const fa = (a == null) ? "/" : String(Math.round(a));
-        const fc = (c == null) ? "/" : String(Math.round(c));
-        return `${fa}/${fc}`;
-      })();
-
-      const statText = (s.statusText == null || String(s.statusText).trim() === "") ? "/" : String(s.statusText).trim();
+        : `${fmtNumOrSlash(s.allocated, 0)}/${fmtNumOrSlash(s.consumed, 0)}`;
 
       const pp = safePct(s.stagePP);
+      const statusText = s.statusText ? s.statusText : (pp == null ? "/" : `${Math.round(pp)}%`);
+
       const alertKind = s.alert?.kind || "";
       const alertText = s.alert?.text || "";
-
       const alertHtml = alertText
         ? `<div class="alert ${alertKind}">${escapeHtml(alertText)}</div>`
-        : `<div class="alert" style="opacity:.35;">/</div>`;
+        : `<div class="alert" style="opacity:.45;">/</div>`;
 
       left.innerHTML = `
         <div class="leftMain">
           <div class="stageName">${escapeHtml(s.label)}</div>
-          <div class="deliver" title="Deliverables">${escapeHtml(delText)}</div>
-          <div class="hrs" title="Allocated / Consumed hours">${escapeHtml(hrsText)}</div>
-          <div class="stat" title="Stage status">${escapeHtml(statText)}</div>
-          <div style="display:flex; align-items:center; gap:10px; margin-left:auto;">
-            ${alertHtml}
-            <div class="ppCircle" title="Stage progress">${pp == null ? "/" : `<span>${Math.round(pp)}%</span>`}</div>
-          </div>
+          <div class="colNum deliv" title="Deliverables">${escapeHtml(delText)}</div>
+          <div class="colNum hrs" title="Allocated / Consumed hours">${escapeHtml(hrsText)}</div>
+          <div class="colNum stat" title="Status Progress">${escapeHtml(fmtStatus(statusText))}</div>
+          <div style="margin-left:auto;">${alertHtml}</div>
         </div>
       `;
 
@@ -571,6 +556,7 @@ export function initGantt(mountEl, opts = {}){
 
       appendLines(lane, windowStart, windowEnd);
 
+      // Timeline bar
       if(s.start || s.end){
         const a = s.start || s.end;
         const b = s.end || s.start;
@@ -590,13 +576,22 @@ export function initGantt(mountEl, opts = {}){
         bar.className = "bar";
         bar.style.left = `${leftPct}%`;
         bar.style.width = `${widthPct}%`;
+        bar.title = [
+          `Stage: ${s.label}`,
+          `Start: ${s.start instanceof Date && !isNaN(s.start) ? s.start.toDateString() : "/"}`,
+          `End: ${s.end instanceof Date && !isNaN(s.end) ? s.end.toDateString() : "/"}`,
+          `Ext: ${s.extEnd instanceof Date && !isNaN(s.extEnd) ? s.extEnd.toDateString() : "/"}`,
+          `Deliverables: ${delText}`,
+          `Hours A/C: ${hrsText}`,
+          `Status: ${fmtStatus(statusText)}`
+        ].join("\n");
 
         const inner = document.createElement("div");
         inner.className = "barInner";
         inner.style.background = disciplineVar(s.discipline);
         bar.appendChild(inner);
 
-        // Ext hatch from planned end -> ext end
+        // Extension hatch from planned end -> ext end
         if(s.extEnd instanceof Date && !isNaN(s.extEnd) && s.end instanceof Date && !isNaN(s.end)){
           if(s.extEnd.getTime() > s.end.getTime()){
             const extStartOff = (s.end - windowStart) / 86400000;
