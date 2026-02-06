@@ -52,12 +52,6 @@
       max-width: 1100px;
     }
 
-    .pill{
-      font-size:12px; padding:6px 10px; border:1px solid var(--grid);
-      border-radius:999px; color:var(--muted); background: rgba(0,0,0,0.10);
-      white-space:nowrap;
-    }
-
     input[type="text"], select{
       background:#0f172a; border:1px solid var(--grid); color:var(--text);
       border-radius:12px; padding:10px 10px; outline:none;
@@ -65,7 +59,6 @@
     }
     select{ min-width: 220px; }
 
-    /* Upload button */
     .btn{
       border:1px solid rgba(255,255,255,0.16);
       background: rgba(255,255,255,0.06);
@@ -90,7 +83,6 @@
     }
     .btn:active{ transform: scale(0.985); }
 
-    /* hidden file input */
     .hiddenFile{
       position:absolute;
       left:-9999px;
@@ -132,9 +124,7 @@
       box-shadow: 0 0 0 1px rgba(139,255,178,0.18) inset;
     }
 
-    main{
-      padding:14px 16px 18px;
-    }
+    main{ padding:14px 16px 18px; }
     .card{
       background:var(--card); border:1px solid var(--grid);
       border-radius:14px; padding:12px;
@@ -157,11 +147,9 @@
         <option value="">Select project…</option>
       </select>
 
-      <!-- Upload button triggers hidden file picker -->
+      <!-- Upload button triggers LOCAL file picker -->
       <button id="uploadBtn" class="btn" type="button">UPLOAD</button>
       <input id="file" class="hiddenFile" type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" />
-
-      <span id="status" class="pill">No file loaded</span>
 
       <div class="radioWrap">
         <span class="radioLabel">Team</span>
