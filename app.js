@@ -15,13 +15,15 @@ function startApp(){
 
   const elFile = document.getElementById("file");
   const elUploadBtn = document.getElementById("uploadBtn");
-  const elStatus = document.getElementById("status");
   const elSearch = document.getElementById("search");
   const elTeamRadios = document.getElementById("teamRadios");
   const elProjectSelect = document.getElementById("projectSelect");
 
   const DEFAULT_CSV_URL = new URL("./sheetjs.csv", import.meta.url);
   const STORAGE_KEY = "project_intel_data_v1";
+
+  // ✅ status disabled completely
+  function setStatus(){}
 
   const STAGES = [
     "CD1","CD2","CD3","CD4","CD5",
@@ -44,7 +46,6 @@ function startApp(){
   const PROJECT_FIELDS = {
     projectCode:   ["PC","Project Code","ProjectCode","Code"],
     projectName:   ["Project Name","Project","Name","ProjectName"],
-    bua:           ["BUA","Built up area","Built-up area","Built Up Area","BUA (sqft)","BUA (sqm)"],
     ps:            ["PS","Project Status","Status"],
 
     allottedHours: ["AH","Allotted hours","Allotted Hours","Allotted","Allocated hours","Allocated Hours"],
@@ -54,14 +55,6 @@ function startApp(){
     deployment:    ["DYT","Deployment","Deployement","Deployement "],
     progress:      ["PP","Project progress","Project progess","Progress"],
   };
-
-  function setStatus(msg, kind){
-    if(!elStatus) return;
-    elStatus.textContent = msg;
-    elStatus.style.color = "";
-    if(kind === "ok") elStatus.style.color = "var(--ok)";
-    if(kind === "warn") elStatus.style.color = "var(--warn)";
-  }
 
   function normalizeKey(k){
     return String(k || "")
@@ -377,23 +370,11 @@ function startApp(){
       const effectiveEnd = (v.extEnd && v.end && v.extEnd > v.end) ? v.extEnd : (v.extEnd || v.end);
 
       if(pp != null && pp >= 100){
-        alert.kind = "ok";
-        alert.text = "Complete";
+        alert.kind = "ok"; alert.text = "Complete";
       } else if(v.start && effectiveEnd){
         if(today > effectiveEnd){
           alert.kind = "bad";
           alert.text = `Overdue +${Math.max(1, daysBetween(effectiveEnd, today))}d`;
-        } else if(today >= v.start && today <= effectiveEnd){
-          const spent = Math.max(0, daysBetween(v.start, today));
-          const left = Math.max(0, daysBetween(today, effectiveEnd));
-          alert.kind = "warn";
-          alert.text = `Spent ${spent}d • Left ${left}d`;
-        } else {
-          const dToStart = daysBetween(today, v.start);
-          if(dToStart > 0 && dToStart <= 15){
-            alert.kind = "warn";
-            alert.text = `In ${dToStart}d`;
-          }
         }
       }
 
@@ -478,7 +459,7 @@ function startApp(){
         if(ch === '"') inQuotes=true;
         else if(ch === delimiter){ row.push(cur); cur=""; }
         else if(ch === "\n"){ row.push(cur); rows.push(row); row=[]; cur=""; }
-        else if(ch === "\r"){ /* ignore */ }
+        else if(ch === "\r"){ }
         else cur+=ch;
       }
     }
@@ -529,18 +510,12 @@ function startApp(){
     return { rows, typeCols, keyMap, headers };
   }
 
-  async function importCsvText(text, nameForStatus){
+  async function importCsvText(text){
     const delim = detectDelimiter(text);
     const matrix = parseDelimited(text, delim);
     const { headers, objects } = matrixToObjects(matrix);
-
     sessionStorage.setItem(STORAGE_KEY, serializeForStorage(headers, objects));
-
-    const norm = normalizeRows(headers, objects);
-
-    // ✅ no row count text
-    setStatus(`Loaded ${nameForStatus || "sheetjs.csv"}`, "ok");
-    return norm;
+    return normalizeRows(headers, objects);
   }
 
   async function importXlsxFile(file){
@@ -551,24 +526,16 @@ function startApp(){
     const ws = workbook.Sheets[workbook.SheetNames[0]];
     const matrix = XLSX.utils.sheet_to_json(ws, { header:1, defval:"", raw:false });
     const { headers, objects } = matrixToObjects(matrix);
-
     sessionStorage.setItem(STORAGE_KEY, serializeForStorage(headers, objects));
-    const norm = normalizeRows(headers, objects);
-
-    // ✅ no row count text
-    setStatus(`Imported ${file.name}`, "ok");
-    return norm;
+    return normalizeRows(headers, objects);
   }
 
   async function loadDefaultFromRepo(){
-    if(location.protocol === "file:"){
-      setStatus("Open via GitHub Pages / web server to auto-load sheetjs.csv", "warn");
-      return null;
-    }
+    if(location.protocol === "file:") return null;
     const res = await fetch(DEFAULT_CSV_URL.toString(), { cache:"no-store" });
     if(!res.ok) throw new Error(`sheetjs.csv fetch failed: HTTP ${res.status}`);
     const text = await res.text();
-    return importCsvText(text, "sheetjs.csv");
+    return importCsvText(text);
   }
 
   async function loadData(){
@@ -576,22 +543,12 @@ function startApp(){
     if(stored){
       try{
         const parsed = deserializeFromStorage(stored);
-        if(parsed){
-          const norm = normalizeRows(parsed.headers, parsed.objects);
-
-          // ✅ no row count text + no "from session" wording
-          setStatus("Loaded", "ok");
-          return norm;
-        }
+        if(parsed) return normalizeRows(parsed.headers, parsed.objects);
       } catch {}
     }
-
-    setStatus("Loading sheetjs.csv…");
     try{
       return await loadDefaultFromRepo();
-    } catch (err){
-      console.warn(err);
-      setStatus("Auto-load failed", "warn");
+    } catch {
       return null;
     }
   }
@@ -612,9 +569,7 @@ function startApp(){
   }) : null;
 
   const metrics = (ganttMount && metricsMount) ? initMetrics(metricsMount, {
-    onRunwaySimulated: (sim)=>{
-      gantt?.setRunway(sim?.runwayDate || null);
-    }
+    onRunwaySimulated: (sim)=> gantt?.setRunway(sim?.runwayDate || null)
   }) : null;
 
   let allRows = [];
@@ -623,9 +578,7 @@ function startApp(){
   let searchQuery = "";
 
   function getTeamsAll(){
-    const teams = allRows
-      .map(r => String(r.__team || "").trim())
-      .filter(Boolean);
+    const teams = allRows.map(r => String(r.__team || "").trim()).filter(Boolean);
     return uniq(teams).sort((a,b)=>a.localeCompare(b));
   }
 
@@ -731,7 +684,6 @@ function startApp(){
   function renderProjectDropdown(cards){
     if(!elProjectSelect) return;
     const current = elProjectSelect.value || "";
-
     elProjectSelect.innerHTML = `<option value="">Select project…</option>`;
     for(const c of cards){
       const opt = document.createElement("option");
@@ -739,10 +691,7 @@ function startApp(){
       opt.textContent = c.name ? `${c.pc} — ${c.name}` : c.pc;
       elProjectSelect.appendChild(opt);
     }
-
-    if(current && cards.some(c => c.pc === current)){
-      elProjectSelect.value = current;
-    }
+    if(current && cards.some(c => c.pc === current)) elProjectSelect.value = current;
   }
 
   function renderLanding(){
@@ -776,12 +725,7 @@ function startApp(){
     });
 
     renderProjectDropdown(cards);
-
-    landing.setData({
-      title: "Projects",
-      subtitle: "",
-      projects: cards
-    });
+    landing.setData({ title:"Projects", subtitle:"", projects: cards });
   }
 
   function renderDashboard(){
@@ -812,7 +756,7 @@ function startApp(){
     metrics.setData({ title, hours, people, runway });
   }
 
-  // ✅ Upload button triggers hidden file input
+  // ✅ Upload button triggers LOCAL file picker
   if(elUploadBtn && elFile){
     elUploadBtn.addEventListener("click", ()=>{
       elFile.click();
@@ -840,16 +784,15 @@ function startApp(){
     elFile.addEventListener("change", async ()=>{
       const f = elFile.files?.[0];
       if(!f) return;
-      try{
-        setStatus("Loading…");
-        let norm = null;
 
+      try{
+        let norm = null;
         const name = String(f.name || "").toLowerCase();
         if(name.endsWith(".xlsx") || name.endsWith(".xls")){
           norm = await importXlsxFile(f);
         } else {
           const text = await f.text();
-          norm = await importCsvText(text, f.name);
+          norm = await importCsvText(text);
         }
 
         allRows = norm.rows;
@@ -863,7 +806,7 @@ function startApp(){
         }
       } catch (err){
         console.error(err);
-        setStatus("Upload failed", "warn");
+        setStatus("Upload failed");
       } finally {
         // allow selecting same file again
         elFile.value = "";
