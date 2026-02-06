@@ -3,12 +3,12 @@ import { initMetrics } from "./modules/metrics.module.js";
 
 window.addEventListener("DOMContentLoaded", () => startApp());
 
-function startApp(){
-  const TEAM_TYPES_FIXED = ["Architecture","Interior","Landscape"];
+function startApp() {
+  const TEAM_TYPES_FIXED = ["Architecture", "Interior", "Landscape"];
   const TEAM_UNSPEC = "(Unspecified)";
   const TEAM_BLANK_SENTINEL = "__BLANK__";
 
-  // Auto-load this CSV from the repo (same folder as app.js)
+  // Auto-load this CSV from the repo (relative to app.js)
   const DEFAULT_CSV_URL = new URL("./sheetjs.csv", import.meta.url);
 
   const STAGES = [
@@ -41,109 +41,171 @@ function startApp(){
     progress:      ["PP","Project progress","Project progess","Progress"],
   };
 
-  // ---- helpers
-  function normalizeKey(k){
-    return String(k||"").replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s_-]+/g,"");
+  // ---------- DOM (OPTIONAL elements) ----------
+  const $ = (id) => document.getElementById(id);
+
+  const elFile = $("file");
+  const elStatus = $("status");
+  const elProjectSelect = $("projectSelect");
+  const elSearch = $("search");
+  const elTeamTypeRadios = $("teamTypeRadios");
+  const elTeamRadios = $("teamRadios");
+  const elTable = $("table");
+  const elRowCount = $("rowCount");
+
+  const elGanttMount = $("ganttMount");
+  const elMetricsMount = $("metricsMount");
+
+  const HAS_DASHBOARD = !!(elGanttMount && elMetricsMount);
+
+  // ---------- helpers ----------
+  function setStatus(msg, kind) {
+    if (!elStatus) {
+      // No status pill on this page; avoid crashing.
+      if (kind === "warn") console.warn(msg);
+      else console.log(msg);
+      return;
+    }
+    elStatus.textContent = msg;
+    elStatus.style.color = "";
+    if (kind === "ok") elStatus.style.color = "var(--ok)";
+    if (kind === "warn") elStatus.style.color = "var(--warn)";
   }
-  function buildHeaderIndex(headers){
-    const idx={}; for(const h of headers) idx[normalizeKey(h)] = h; return idx;
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g,"&amp;")
+      .replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;")
+      .replace(/\"/g,"&quot;")
+      .replace(/'/g,"&#039;");
   }
-  function pick(row, candidates){
-    const map=row.__keyMap||{};
-    for(const c of candidates){
-      const nk=normalizeKey(c);
-      if(map[nk] !== undefined) return row[map[nk]];
+
+  function normalizeKey(k) {
+    return String(k || "")
+      .replace(/^\uFEFF/, "")
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_-]+/g, "");
+  }
+
+  function buildHeaderIndex(headers) {
+    const idx = {};
+    for (const h of headers) idx[normalizeKey(h)] = h;
+    return idx;
+  }
+
+  function pick(row, candidates) {
+    const map = row.__keyMap || {};
+    for (const c of candidates) {
+      const nk = normalizeKey(c);
+      if (map[nk] !== undefined) return row[map[nk]];
     }
     return "";
   }
-  function getAllValues(row, candidates){
-    const map=row.__keyMap||{};
-    const out=[];
-    for(const c of candidates){
-      const nk=normalizeKey(c);
-      if(map[nk] !== undefined) out.push(row[map[nk]]);
+
+  function getAllValues(row, candidates) {
+    const map = row.__keyMap || {};
+    const out = [];
+    for (const c of candidates) {
+      const nk = normalizeKey(c);
+      if (map[nk] !== undefined) out.push(row[map[nk]]);
     }
     return out;
   }
-  function uniq(arr){ return Array.from(new Set(arr)); }
 
-  function toNumber(v){
-    if(v==null) return 0;
-    if(typeof v === "number" && Number.isFinite(v)) return v;
-    const s=String(v).trim(); if(!s) return 0;
-    const cleaned=s.replace(/,/g,"").replace(/[^0-9.\-]/g,"");
-    const n=Number(cleaned);
-    return Number.isFinite(n)?n:0;
+  function uniq(arr) {
+    return Array.from(new Set(arr));
   }
-  function toPercent(v){
-    if(v==null) return 0;
-    if(typeof v === "number" && Number.isFinite(v)){
-      if(v > 0 && v <= 1) return v * 100;
+
+  function toNumber(v) {
+    if (v == null) return 0;
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    const s = String(v).trim();
+    if (!s) return 0;
+    const cleaned = s.replace(/,/g, "").replace(/[^0-9.\-]/g, "");
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function toPercent(v) {
+    if (v == null) return 0;
+    if (typeof v === "number" && Number.isFinite(v)) {
+      if (v > 0 && v <= 1) return v * 100;
       return v;
     }
     const s = String(v).trim();
-    if(!s) return 0;
+    if (!s) return 0;
     const hasPct = s.includes("%");
     const n = toNumber(s);
-    if(!Number.isFinite(n)) return 0;
-    if(hasPct) return n;
-    if(n > 0 && n <= 1) return n * 100;
+    if (!Number.isFinite(n)) return 0;
+    if (hasPct) return n;
+    if (n > 0 && n <= 1) return n * 100;
     return n;
   }
-  function clamp(n,a,b){ return Math.max(a, Math.min(b,n)); }
 
-  function parseDate(v){
-    if(v==null) return null;
-    if(v instanceof Date && !isNaN(v)) return v;
+  function clamp(n, a, b) {
+    return Math.max(a, Math.min(b, n));
+  }
 
-    if(typeof v === "number" && Number.isFinite(v)){
+  function parseDate(v) {
+    if (v == null) return null;
+    if (v instanceof Date && !isNaN(v)) return v;
+
+    if (typeof v === "number" && Number.isFinite(v)) {
       const epoch = new Date(Date.UTC(1899, 11, 30));
       const d = new Date(epoch.getTime() + v * 86400000);
-      return isNaN(d)?null:d;
+      return isNaN(d) ? null : d;
     }
 
-    const s=String(v).trim();
-    if(!s) return null;
+    const s = String(v).trim();
+    if (!s) return null;
 
-    const m2=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
-    if(m2){
-      let dd=+m2[1], mm=+m2[2]-1, yy=+m2[3]; if(yy<100) yy+=2000;
-      const d=new Date(yy,mm,dd);
-      return isNaN(d)?null:d;
+    const m2 = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+    if (m2) {
+      let dd = +m2[1], mm = +m2[2] - 1, yy = +m2[3];
+      if (yy < 100) yy += 2000;
+      const d = new Date(yy, mm, dd);
+      return isNaN(d) ? null : d;
     }
 
-    const d=new Date(s);
-    return isNaN(d)?null:d;
+    const d = new Date(s);
+    return isNaN(d) ? null : d;
   }
 
-  function daysBetween(a,b){ return Math.round((b-a)/86400000); }
+  function daysBetween(a, b) {
+    return Math.round((b - a) / 86400000);
+  }
 
-  function isNumericLike(s){
-    const t = String(s||"").trim();
-    if(!t) return false;
+  function isNumericLike(s) {
+    const t = String(s || "").trim();
+    if (!t) return false;
     return /^-?\d+(\.\d+)?$/.test(t);
   }
-  function isTruthyFlag(raw){
-    const low = String(raw||"").trim().toLowerCase();
-    if(!low) return false;
-    if(["y","yes","true","t","1"].includes(low)) return true;
-    if(isNumericLike(low)) return Number(low) > 0;
+
+  function isTruthyFlag(raw) {
+    const low = String(raw || "").trim().toLowerCase();
+    if (!low) return false;
+    if (["y","yes","true","t","1"].includes(low)) return true;
+    if (isNumericLike(low)) return Number(low) > 0;
     return false;
-  }
-  function isFalsyFlag(raw){
-    const low = String(raw||"").trim().toLowerCase();
-    if(!low) return false;
-    if(["n","no","false","f","0","na","n/a","-"].includes(low)) return true;
-    if(isNumericLike(low)) return Number(low) <= 0;
-    return false;
-  }
-  function looksLikeName(raw){
-    return /[a-zA-Z]/.test(String(raw||""));
   }
 
-  function discoverTeamTypeColumns(headers){
-    const normHeaders = headers.map(h => ({ raw:h, n:normalizeKey(h) }));
-    function firstMatch(predicate){
+  function isFalsyFlag(raw) {
+    const low = String(raw || "").trim().toLowerCase();
+    if (!low) return false;
+    if (["n","no","false","f","0","na","n/a","-"].includes(low)) return true;
+    if (isNumericLike(low)) return Number(low) <= 0;
+    return false;
+  }
+
+  function looksLikeName(raw) {
+    return /[a-zA-Z]/.test(String(raw || ""));
+  }
+
+  function discoverTeamTypeColumns(headers) {
+    const normHeaders = headers.map(h => ({ raw: h, n: normalizeKey(h) }));
+    function firstMatch(predicate) {
       const hit = normHeaders.find(predicate);
       return hit ? hit.raw : null;
     }
@@ -153,54 +215,60 @@ function startApp(){
     return { Architecture: arch, Interior: interior, Landscape: landscape };
   }
 
-  function deriveTeamInfo(row, typeCols){
+  function deriveTeamInfo(row, typeCols) {
     const fallbackTeam = String(pick(row, FIELDS.teamName) || "").trim();
 
-    for(const type of TEAM_TYPES_FIXED){
+    for (const type of TEAM_TYPES_FIXED) {
       const col = typeCols?.[type];
-      if(!col) continue;
+      if (!col) continue;
 
       const raw = String(row[col] ?? "").trim();
-      if(!raw) continue;
-      if(isFalsyFlag(raw)) continue;
+      if (!raw) continue;
+      if (isFalsyFlag(raw)) continue;
 
-      if(isTruthyFlag(raw) || !looksLikeName(raw)){
-        return { teamType:type, team: fallbackTeam || "" };
+      if (isTruthyFlag(raw) || !looksLikeName(raw)) {
+        return { teamType: type, team: fallbackTeam || "" };
       }
-      return { teamType:type, team: raw };
+      return { teamType: type, team: raw };
     }
-    return { teamType:"", team:"" };
+    return { teamType: "", team: "" };
   }
 
-  function displayTeam(t){ return t ? t : TEAM_UNSPEC; }
-  function normalizeTeamSelectionValue(v){ return (v === TEAM_UNSPEC) ? TEAM_BLANK_SENTINEL : v; }
-  function matchTeam(rowTeam, activeTeam){
+  function displayTeam(t) {
+    return t ? t : TEAM_UNSPEC;
+  }
+
+  function normalizeTeamSelectionValue(v) {
+    return (v === TEAM_UNSPEC) ? TEAM_BLANK_SENTINEL : v;
+  }
+
+  function matchTeam(rowTeam, activeTeam) {
     const rt = String(rowTeam || "").trim().toLowerCase();
-    if(activeTeam === TEAM_BLANK_SENTINEL) return rt === "";
-    return rt === String(activeTeam||"").trim().toLowerCase();
+    if (activeTeam === TEAM_BLANK_SENTINEL) return rt === "";
+    return rt === String(activeTeam || "").trim().toLowerCase();
   }
 
-  // Deployment parsing: keep ABSOLUTE percentages exactly as written
-  function parseDeploymentCell(v){
-    const s=String(v||"").trim(); if(!s) return [];
+  function parseDeploymentCell(v) {
+    const s = String(v || "").trim();
+    if (!s) return [];
     return s.split(",")
-      .map(p=>p.trim())
+      .map(p => p.trim())
       .filter(Boolean)
-      .map(part=>{
-        const m=part.match(/^(.*?)\s*\(\s*([0-9]+(?:\.[0-9]+)?)\s*%?\s*\)\s*$/);
-        if(m) return { name:(m[1].trim()||"(Blank)"), pct:Number(m[2]) };
-        return { name:part, pct:0 };
+      .map(part => {
+        const m = part.match(/^(.*?)\s*\(\s*([0-9]+(?:\.[0-9]+)?)\s*%?\s*\)\s*$/);
+        if (m) return { name: (m[1].trim() || "(Blank)"), pct: Number(m[2]) };
+        return { name: part, pct: 0 };
       });
   }
 
-  function disciplineForStage(stage){
-    if(DISCIPLINE.Architecture.has(stage)) return "Architecture";
-    if(DISCIPLINE.Interior.has(stage)) return "Interior";
-    if(DISCIPLINE.Landscape.has(stage)) return "Landscape";
+  function disciplineForStage(stage) {
+    if (DISCIPLINE.Architecture.has(stage)) return "Architecture";
+    if (DISCIPLINE.Interior.has(stage)) return "Interior";
+    if (DISCIPLINE.Landscape.has(stage)) return "Landscape";
     return "Architecture";
   }
 
-  function stageSchema(stageCode){
+  function stageSchema(stageCode) {
     return {
       start: [
         `${stageCode} Start date`, `${stageCode} Start Date`,
@@ -234,119 +302,119 @@ function startApp(){
     };
   }
 
-  function isStageComplete(statusText){
+  function isStageComplete(statusText) {
     const s = String(statusText || "").trim().toLowerCase();
     return s.includes("complete") || s === "done" || s === "completed";
   }
 
-  function collectStageStatusValues(row, stageCode){
+  function collectStageStatusValues(row, stageCode) {
     const sc = normalizeKey(stageCode);
     const vals = [];
 
     const explicit = pick(row, stageSchema(stageCode).status);
-    if(String(explicit||"").trim()) vals.push(String(explicit).trim());
+    if (String(explicit || "").trim()) vals.push(String(explicit).trim());
 
-    for(const k of Object.keys(row)){
-      if(k === "__keyMap") continue;
+    for (const k of Object.keys(row)) {
+      if (k === "__keyMap") continue;
       const nk = normalizeKey(k);
-      if(!nk.includes(sc)) continue;
-      if(!(nk.includes("status") || nk.includes("completion") || nk.includes("complete"))) continue;
+      if (!nk.includes(sc)) continue;
+      if (!(nk.includes("status") || nk.includes("completion") || nk.includes("complete"))) continue;
       const v = String(row[k] ?? "").trim();
-      if(v) vals.push(v);
+      if (v) vals.push(v);
     }
     return uniq(vals);
   }
 
-  function buildStagesFromProjectRowsWide(rowsForProject, today){
+  function buildStagesFromProjectRowsWide(rowsForProject, today) {
     const stageMap = new Map(STAGES.map(s => [s, {
-      start:null, end:null, extEnd:null, done:false, statusText:"",
-      delDone:null, delRemain:null,
-      stagePP:null
+      start: null, end: null, extEnd: null, done: false, statusText: "",
+      delDone: null, delRemain: null,
+      stagePP: null
     }]));
 
-    for(const row of rowsForProject){
-      for(const st of STAGES){
+    for (const row of rowsForProject) {
+      for (const st of STAGES) {
         const sch = stageSchema(st);
 
         const startDates = getAllValues(row, sch.start).map(parseDate).filter(Boolean);
         const plannedEnds = getAllValues(row, sch.plannedEnd).map(parseDate).filter(Boolean);
         const extEnds = getAllValues(row, sch.extEnd).map(parseDate).filter(Boolean);
 
-        let s = startDates.length ? new Date(Math.min(...startDates.map(d=>d.getTime()))) : null;
-        let e = plannedEnds.length ? new Date(Math.max(...plannedEnds.map(d=>d.getTime()))) : null;
-        let x = extEnds.length ? new Date(Math.max(...extEnds.map(d=>d.getTime()))) : null;
+        let s = startDates.length ? new Date(Math.min(...startDates.map(d => d.getTime()))) : null;
+        let e = plannedEnds.length ? new Date(Math.max(...plannedEnds.map(d => d.getTime()))) : null;
+        let x = extEnds.length ? new Date(Math.max(...extEnds.map(d => d.getTime()))) : null;
 
         const statusVals = collectStageStatusValues(row, st);
         const cur = stageMap.get(st);
 
-        if(statusVals.length){
+        if (statusVals.length) {
           cur.statusText = statusVals.join(" | ");
-          if(statusVals.some(isStageComplete)) cur.done = true;
+          if (statusVals.some(isStageComplete)) cur.done = true;
         }
 
-        const doneVals = getAllValues(row, sch.delDone).map(toNumber).filter(n=>Number.isFinite(n));
-        const remVals  = getAllValues(row, sch.delRemain).map(toNumber).filter(n=>Number.isFinite(n));
-        const ratioVals = getAllValues(row, sch.delRatio).map(v=>String(v||"").trim()).filter(Boolean);
+        const doneVals = getAllValues(row, sch.delDone).map(toNumber).filter(n => Number.isFinite(n));
+        const remVals  = getAllValues(row, sch.delRemain).map(toNumber).filter(n => Number.isFinite(n));
+        const ratioVals = getAllValues(row, sch.delRatio).map(v => String(v || "").trim()).filter(Boolean);
 
-        if(doneVals.length){
+        if (doneVals.length) {
           const mx = Math.max(...doneVals);
-          if(cur.delDone == null || mx > cur.delDone) cur.delDone = mx;
+          if (cur.delDone == null || mx > cur.delDone) cur.delDone = mx;
         }
-        if(remVals.length){
+        if (remVals.length) {
           const mx = Math.max(...remVals);
-          if(cur.delRemain == null || mx > cur.delRemain) cur.delRemain = mx;
+          if (cur.delRemain == null || mx > cur.delRemain) cur.delRemain = mx;
         }
-        if((cur.delDone == null || cur.delRemain == null) && ratioVals.length){
-          for(const rv of ratioVals){
+        if ((cur.delDone == null || cur.delRemain == null) && ratioVals.length) {
+          for (const rv of ratioVals) {
             const m = rv.match(/^\s*(\d+)\s*\/\s*(\d+)\s*$/);
-            if(m){
+            if (m) {
               const a = Number(m[1]), b = Number(m[2]);
-              if(cur.delDone == null) cur.delDone = a;
-              if(cur.delRemain == null) cur.delRemain = b;
+              if (cur.delDone == null) cur.delDone = a;
+              if (cur.delRemain == null) cur.delRemain = b;
               break;
             }
           }
         }
 
-        const ppVals = getAllValues(row, sch.stagePP).map(toPercent).filter(n=>Number.isFinite(n));
-        if(ppVals.length){
+        const ppVals = getAllValues(row, sch.stagePP).map(toPercent).filter(n => Number.isFinite(n));
+        if (ppVals.length) {
           const mx = Math.max(...ppVals);
-          if(cur.stagePP == null || mx > cur.stagePP) cur.stagePP = mx;
+          if (cur.stagePP == null || mx > cur.stagePP) cur.stagePP = mx;
         }
 
-        if(!(s||e||x)) continue;
-        if(!e && x) e = x;
-        if(!s && e) s = e;
-        if(!x && e) x = e;
+        if (!(s || e || x)) continue;
+        if (!e && x) e = x;
+        if (!s && e) s = e;
+        if (!x && e) x = e;
 
-        if(s && (!cur.start || s < cur.start)) cur.start = s;
-        if(e && (!cur.end || e > cur.end)) cur.end = e;
-        if(x && (!cur.extEnd || x > cur.extEnd)) cur.extEnd = x;
+        if (s && (!cur.start || s < cur.start)) cur.start = s;
+        if (e && (!cur.end || e > cur.end)) cur.end = e;
+        if (x && (!cur.extEnd || x > cur.extEnd)) cur.extEnd = x;
       }
     }
 
-    return STAGES.map(st=>{
+    return STAGES.map(st => {
       const v = stageMap.get(st);
       const start = v.start;
       const end = v.end;
       const extEnd = v.extEnd;
 
-      const alert = { kind:"", text:"" };
-      if(v.done){
+      const alert = { kind: "", text: "" };
+      if (v.done) {
         alert.kind = "ok";
         alert.text = "Complete";
-      } else if(start && end){
+      } else if (start && end) {
         const dToStart = daysBetween(today, start);
 
-        if(today > end){
+        if (today > end) {
           alert.kind = "bad";
           alert.text = `Overdue +${Math.max(1, daysBetween(end, today))}d`;
-        } else if(today >= start && today <= end){
+        } else if (today >= start && today <= end) {
           const spent = Math.max(0, daysBetween(start, today));
           const left = Math.max(0, daysBetween(today, end));
           alert.kind = "warn";
           alert.text = `Spent ${spent}d • Left ${left}d`;
-        } else if(dToStart > 0 && dToStart <= 15){
+        } else if (dToStart > 0 && dToStart <= 15) {
           alert.kind = "warn";
           alert.text = `In ${dToStart}d`;
         }
@@ -365,51 +433,51 @@ function startApp(){
         statusText: v.statusText,
         deliverDone: delDone,
         deliverRemain: delRemain,
-        stagePP: (v.stagePP == null ? null : clamp(v.stagePP,0,100)),
+        stagePP: (v.stagePP == null ? null : clamp(v.stagePP, 0, 100)),
         alert
       };
     });
   }
 
-  function computeHours(rows){
-    const AH = rows.reduce((s,r)=>s+toNumber(pick(r,FIELDS.allottedHours)),0);
-    const TCH = rows.reduce((s,r)=>s+toNumber(pick(r,FIELDS.consumedHours)),0);
-    const bhColSum = rows.reduce((s,r)=>s+toNumber(pick(r,FIELDS.balanceHours)),0);
+  function computeHours(rows) {
+    const AH = rows.reduce((s, r) => s + toNumber(pick(r, FIELDS.allottedHours)), 0);
+    const TCH = rows.reduce((s, r) => s + toNumber(pick(r, FIELDS.consumedHours)), 0);
+    const bhColSum = rows.reduce((s, r) => s + toNumber(pick(r, FIELDS.balanceHours)), 0);
     const BH = Math.abs(bhColSum) > 0 ? bhColSum : (AH - TCH);
     return { AH, TCH, BH };
   }
 
-  function computeDeploymentPeople(rows){
+  function computeDeploymentPeople(rows) {
     const m = new Map();
-    for(const r of rows){
+    for (const r of rows) {
       const cell = pick(r, FIELDS.deployment);
-      for(const item of parseDeploymentCell(cell)){
-        const name = String(item.name||"").trim() || "(Blank)";
+      for (const item of parseDeploymentCell(cell)) {
+        const name = String(item.name || "").trim() || "(Blank)";
         const pct = Number.isFinite(item.pct) ? item.pct : 0;
-        if(pct <= 0) continue;
-        m.set(name, (m.get(name)||0) + pct);
+        if (pct <= 0) continue;
+        m.set(name, (m.get(name) || 0) + pct);
       }
     }
     return Array.from(m.entries())
-      .map(([name,pct])=>({name,pct}))
-      .sort((a,b)=>b.pct-a.pct);
+      .map(([name, pct]) => ({ name, pct }))
+      .sort((a, b) => b.pct - a.pct);
   }
 
-  function computeProjectPP(rows){
-    if(!rows.length) return 0;
-    const avg = rows.reduce((s,r)=>s+toPercent(pick(r,FIELDS.progress)),0) / rows.length;
+  function computeProjectPP(rows) {
+    if (!rows.length) return 0;
+    const avg = rows.reduce((s, r) => s + toPercent(pick(r, FIELDS.progress)), 0) / rows.length;
     return clamp(avg, 0, 100);
   }
 
-  function computeRunwayFromPeopleAndBH(people, BH){
-    const factorDecimal = people.reduce((s,p)=>s + (p.pct/100), 0);
+  function computeRunwayFromPeopleAndBH(people, BH) {
+    const factorDecimal = people.reduce((s, p) => s + (p.pct / 100), 0);
     const monthlyBurn = factorDecimal * 174.25;
 
-    if(!Number.isFinite(monthlyBurn) || monthlyBurn <= 0) return { runwayMonths: null, runwayDate: null, factorDecimal, monthlyBurn };
-    if(!Number.isFinite(BH) || BH <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
+    if (!Number.isFinite(monthlyBurn) || monthlyBurn <= 0) return { runwayMonths: null, runwayDate: null, factorDecimal, monthlyBurn };
+    if (!Number.isFinite(BH) || BH <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
 
     const runwayMonths = BH / monthlyBurn;
-    if(!Number.isFinite(runwayMonths) || runwayMonths <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
+    if (!Number.isFinite(runwayMonths) || runwayMonths <= 0) return { runwayMonths: 0, runwayDate: null, factorDecimal, monthlyBurn };
 
     const today = new Date();
     const days = runwayMonths * 30.4375;
@@ -418,87 +486,94 @@ function startApp(){
     return { runwayMonths, runwayDate, factorDecimal, monthlyBurn };
   }
 
-  // ---- DOM
-  const elFile = document.getElementById("file");
-  const elStatus = document.getElementById("status");
-  const elProjectSelect = document.getElementById("projectSelect");
-  const elSearch = document.getElementById("search");
-  const elTeamTypeRadios = document.getElementById("teamTypeRadios");
-  const elTeamRadios = document.getElementById("teamRadios");
-  const elTable = document.getElementById("table");
-  const elRowCount = document.getElementById("rowCount");
+  function detectDelimiter(text) {
+    const sample = (text || "").replace(/^\uFEFF/, "");
+    const line = sample.split(/\r?\n/).find(l => l.trim() !== "") || "";
+    const stripped = line.replace(/"([^"]|"")*"/g, "");
+    const delims = [",", ";", "\t", "|"];
+    let best = ",", bestCount = -1;
+    for (const d of delims) {
+      const c = (stripped.split(d).length - 1);
+      if (c > bestCount) { bestCount = c; best = d; }
+    }
+    return best;
+  }
 
-  // ---- state
+  function parseDelimited(text, delimiter) {
+    const t = String(text || "").replace(/^\uFEFF/, "");
+    const rows = []; let row = [], cur = "", inQuotes = false;
+    for (let i = 0; i < t.length; i++) {
+      const ch = t[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (t[i + 1] === '"') { cur += '"'; i++; } else inQuotes = false;
+        } else cur += ch;
+      } else {
+        if (ch === '"') inQuotes = true;
+        else if (ch === delimiter) { row.push(cur); cur = ""; }
+        else if (ch === "\n") { row.push(cur); rows.push(row); row = []; cur = ""; }
+        else if (ch === "\r") { /* ignore */ }
+        else cur += ch;
+      }
+    }
+    row.push(cur); rows.push(row);
+    while (rows.length && rows[rows.length - 1].every(c => String(c).trim() === "")) rows.pop();
+    return rows;
+  }
+
+  function matrixToObjects(matrix) {
+    const headers = (matrix[0] || []).map((h, i) => {
+      const s = String(h ?? "").replace(/^\uFEFF/, "").trim();
+      return s || `Column ${i + 1}`;
+    });
+    const objects = [];
+    for (let r = 1; r < matrix.length; r++) {
+      const line = matrix[r] || [];
+      if (!line.length) continue;
+      if (line.every(c => String(c ?? "").trim() === "")) continue;
+      const obj = {};
+      for (let c = 0; c < headers.length; c++) obj[headers[c]] = (line[c] ?? "");
+      objects.push(obj);
+    }
+    return { headers, objects };
+  }
+
+  function fmtMonthYear(d) {
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yy = d.getFullYear();
+    return `${mm}/${yy}`;
+  }
+
+  function getProjectFromUrl() {
+    try {
+      const u = new URL(location.href);
+      return (
+        u.searchParams.get("project") ||
+        u.searchParams.get("pc") ||
+        u.searchParams.get("code") ||
+        (u.hash ? u.hash.replace("#", "") : "")
+      );
+    } catch {
+      return "";
+    }
+  }
+
+  // ---------- state ----------
   let csvRowsAll = [];
   let allRows = [];
   let filteredRows = [];
   let projectNameMap = new Map();
-  let typeCols = { Architecture:null, Interior:null, Landscape:null };
+  let typeCols = { Architecture: null, Interior: null, Landscape: null };
+
   let activeTeamType = "";
   let activeTeam = "";
   let activeProject = "";
   let runwayDate = null;
 
-  // ---- UI helpers
-  function setStatus(msg, kind){
-    elStatus.textContent = msg;
-    elStatus.style.color = "";
-    if(kind === "ok") elStatus.style.color = "var(--ok)";
-    if(kind === "warn") elStatus.style.color = "var(--warn)";
-  }
-
-  function renderRadioRow(el, values, activeValue, onPick){
-    el.innerHTML = "";
-    const list = ["", ...(values||[])];
-    for(const v of list){
-      const b = document.createElement("button");
-      b.type="button";
-      b.className = "radioBtn" + ((v===activeValue) ? " active" : "");
-      b.textContent = v ? v : "All";
-      b.dataset.value = v;
-      b.onclick = ()=> onPick(v);
-      el.appendChild(b);
-    }
-  }
-  function setActiveRadio(el, activeValue){
-    for(const b of el.querySelectorAll(".radioBtn")){
-      b.classList.toggle("active", b.dataset.value === activeValue);
-    }
-  }
-
-  function buildProjectNameMap(rows){
-    projectNameMap = new Map();
-    for(const r of rows){
-      const pc = String(pick(r, FIELDS.projectCode) || "").trim();
-      const pn = String(pick(r, FIELDS.projectName) || "").trim();
-      if(pc && pn && !projectNameMap.has(pc)) projectNameMap.set(pc, pn);
-    }
-  }
-
-  function initProjectDropdown(rows){
-    const codes = uniq((rows||[])
-      .map(r=>String(pick(r,FIELDS.projectCode)||"").trim())
-      .filter(Boolean))
-      .sort((a,b)=>a.localeCompare(b));
-
-    const prev = activeProject || "";
-    elProjectSelect.innerHTML = `<option value="">Select a project…</option>` +
-      codes.map(pc=>{
-        const pn = projectNameMap.get(pc) || "";
-        const label = pn ? `${pc} — ${pn}` : pc;
-        return `<option value="${escapeHtml(pc)}">${escapeHtml(label)}</option>`;
-      }).join("");
-
-    if(prev && codes.includes(prev)) activeProject = prev;
-    else activeProject = codes[0] || "";
-    elProjectSelect.value = activeProject || "";
-
-    elProjectSelect.disabled = codes.length === 0;
-    elSearch.disabled = codes.length === 0;
-  }
-
-  function renderTable(rows){
-    if (!rows.length){
+  // ---------- UI helpers (guarded) ----------
+  function renderTable(rows) {
+    if (!elTable) return;
+    if (!rows.length) {
       elTable.innerHTML = `<tr><td class="note">No rows to display.</td></tr>`;
       return;
     }
@@ -510,37 +585,95 @@ function startApp(){
     elTable.innerHTML = thead + tbody;
   }
 
-  function escapeHtml(s){
-    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
-      .replace(/\"/g,"&quot;").replace(/'/g,"&#039;");
+  function renderRadioRow(el, values, activeValue, onPick) {
+    if (!el) return;
+    el.innerHTML = "";
+    const list = ["", ...(values || [])];
+    for (const v of list) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "radioBtn" + ((v === activeValue) ? " active" : "");
+      b.textContent = v ? v : "All";
+      b.dataset.value = v;
+      b.onclick = () => onPick(v);
+      el.appendChild(b);
+    }
   }
 
-  // ---- filters
-  function rowMatchesTeamType(r){
-    if(!activeTeamType) return true;
+  function setActiveRadio(el, activeValue) {
+    if (!el) return;
+    for (const b of el.querySelectorAll(".radioBtn")) {
+      b.classList.toggle("active", b.dataset.value === activeValue);
+    }
+  }
+
+  function buildProjectNameMap(rows) {
+    projectNameMap = new Map();
+    for (const r of rows) {
+      const pc = String(pick(r, FIELDS.projectCode) || "").trim();
+      const pn = String(pick(r, FIELDS.projectName) || "").trim();
+      if (pc && pn && !projectNameMap.has(pc)) projectNameMap.set(pc, pn);
+    }
+  }
+
+  function initProjectDropdown(rows) {
+    // If dropdown not present (dashboard page), just pick project from URL / first project.
+    const urlProject = getProjectFromUrl();
+
+    const codes = uniq((rows || [])
+      .map(r => String(pick(r, FIELDS.projectCode) || "").trim())
+      .filter(Boolean))
+      .sort((a, b) => a.localeCompare(b));
+
+    if (!elProjectSelect) {
+      activeProject = (urlProject && codes.includes(urlProject)) ? urlProject : (codes[0] || "");
+      return;
+    }
+
+    const prev = activeProject || urlProject || "";
+    elProjectSelect.innerHTML =
+      `<option value="">Select a project…</option>` +
+      codes.map(pc => {
+        const pn = projectNameMap.get(pc) || "";
+        const label = pn ? `${pc} — ${pn}` : pc;
+        return `<option value="${escapeHtml(pc)}">${escapeHtml(label)}</option>`;
+      }).join("");
+
+    if (prev && codes.includes(prev)) activeProject = prev;
+    else activeProject = codes[0] || "";
+
+    elProjectSelect.value = activeProject || "";
+    elProjectSelect.disabled = codes.length === 0;
+
+    if (elSearch) elSearch.disabled = codes.length === 0;
+  }
+
+  function rowMatchesTeamType(r) {
+    if (!activeTeamType) return true;
     return String(r.__teamType || "").toLowerCase() === activeTeamType.toLowerCase();
   }
-  function rowMatchesTeam(r){
-    if(!activeTeam) return true;
+
+  function rowMatchesTeam(r) {
+    if (!activeTeam) return true;
     return matchTeam(r.__team || "", activeTeam);
   }
 
-  function getTeamsForSelectedType(){
+  function getTeamsForSelectedType() {
     const teams = csvRowsAll
       .filter(r => rowMatchesTeamType(r))
       .map(r => displayTeam(String(r.__team || "").trim()))
       .filter(Boolean);
-    return uniq(teams).sort((a,b)=>a.localeCompare(b));
+    return uniq(teams).sort((a, b) => a.localeCompare(b));
   }
 
-  function applyCsvFilters(){
+  function applyCsvFilters() {
     allRows = csvRowsAll.filter(r => rowMatchesTeamType(r) && rowMatchesTeam(r));
     buildProjectNameMap(allRows);
     initProjectDropdown(allRows);
     renderAll();
   }
 
-  function setTeamType(v){
+  function setTeamType(v) {
     activeTeamType = v || "";
     setActiveRadio(elTeamTypeRadios, activeTeamType);
 
@@ -548,49 +681,48 @@ function startApp(){
     setActiveRadio(elTeamRadios, "");
 
     const teams = getTeamsForSelectedType();
-    renderRadioRow(elTeamRadios, teams, "", (vv)=> setTeam(vv));
+    renderRadioRow(elTeamRadios, teams, "", (vv) => setTeam(vv));
 
     applyCsvFilters();
   }
-  function setTeam(v){
+
+  function setTeam(v) {
     activeTeam = normalizeTeamSelectionValue(v || "");
     setActiveRadio(elTeamRadios, v || "");
     applyCsvFilters();
   }
 
-  function fmtMonthYear(d){
-    const mm = String(d.getMonth()+1).padStart(2,"0");
-    const yy = d.getFullYear();
-    return `${mm}/${yy}`;
-  }
+  // ---------- modules (only if mounts exist) ----------
+  const gantt = HAS_DASHBOARD ? initGantt(elGanttMount, { fmtWindow: (a, b) => `${fmtMonthYear(a)} → ${fmtMonthYear(b)}` }) : null;
 
-  // ---- modules
-  const gantt = initGantt(document.getElementById("ganttMount"), {
-    fmtWindow: (a,b)=> `${fmtMonthYear(a)} → ${fmtMonthYear(b)}`
-  });
-
-  const metrics = initMetrics(document.getElementById("metricsMount"), {
-    onRunwaySimulated: (sim)=>{
+  const metrics = HAS_DASHBOARD ? initMetrics(elMetricsMount, {
+    onRunwaySimulated: (sim) => {
       runwayDate = sim?.runwayDate || null;
-      gantt.setRunway(runwayDate);
+      gantt?.setRunway(runwayDate);
     }
-  });
+  }) : null;
 
-  function renderAll(){
-    const query = elSearch.value.trim().toLowerCase();
-    activeProject = elProjectSelect.value || "";
+  // ---------- render ----------
+  function renderAll() {
+    // Determine active project:
+    if (elProjectSelect) activeProject = elProjectSelect.value || "";
+    else activeProject = activeProject || "";
 
-    filteredRows = allRows.filter(row=>{
-      if(activeProject){
-        const code=String(pick(row,FIELDS.projectCode)||"").trim();
-        if(code !== activeProject) return false;
+    const query = elSearch ? elSearch.value.trim().toLowerCase() : "";
+
+    filteredRows = allRows.filter(row => {
+      if (activeProject) {
+        const code = String(pick(row, FIELDS.projectCode) || "").trim();
+        if (code !== activeProject) return false;
       }
-      if(!query) return true;
+      if (!query) return true;
       return JSON.stringify(row).toLowerCase().includes(query);
     });
 
-    elRowCount.textContent = `${filteredRows.length} rows`;
+    if (elRowCount) elRowCount.textContent = `${filteredRows.length} rows`;
     renderTable(filteredRows);
+
+    if (!HAS_DASHBOARD) return;
 
     const rowsForProject = activeProject ? filteredRows : [];
     const today = new Date();
@@ -600,89 +732,46 @@ function startApp(){
 
     const stages = activeProject ? buildStagesFromProjectRowsWide(rowsForProject, today) : [];
     const projectPP = activeProject ? computeProjectPP(rowsForProject) : 0;
-    const hours = activeProject ? computeHours(rowsForProject) : {AH:0,TCH:0,BH:0};
+    const hours = activeProject ? computeHours(rowsForProject) : { AH: 0, TCH: 0, BH: 0 };
     const people = activeProject ? computeDeploymentPeople(rowsForProject) : [];
 
     const runway = computeRunwayFromPeopleAndBH(people, hours.BH);
     runwayDate = runway.runwayDate || null;
 
-    gantt.setData({ title, projectPP, stages, runwayDate });
-    metrics.setData({ title, hours, people, runway });
-
-    gantt.setRunway(runwayDate);
+    gantt?.setData({ title, projectPP, stages, runwayDate });
+    metrics?.setData({ title, hours, people, runway });
+    gantt?.setRunway(runwayDate);
   }
 
-  // ---- parsing
-  function detectDelimiter(text){
-    const sample = (text || "").replace(/^\uFEFF/, "");
-    const line = sample.split(/\r?\n/).find(l => l.trim() !== "") || "";
-    const stripped = line.replace(/"([^"]|"")*"/g, "");
-    const delims = [",",";","\t","|"];
-    let best = ",", bestCount = -1;
-    for(const d of delims){
-      const c = (stripped.split(d).length - 1);
-      if(c > bestCount){ bestCount = c; best = d; }
-    }
-    return best;
-  }
-  function parseDelimited(text, delimiter){
-    const t = String(text || "").replace(/^\uFEFF/, "");
-    const rows=[]; let row=[], cur="", inQuotes=false;
-    for(let i=0;i<t.length;i++){
-      const ch=t[i];
-      if(inQuotes){
-        if(ch === '"'){
-          if(t[i+1] === '"'){ cur+='"'; i++; } else inQuotes=false;
-        } else cur+=ch;
-      } else {
-        if(ch === '"') inQuotes=true;
-        else if(ch === delimiter){ row.push(cur); cur=""; }
-        else if(ch === "\n"){ row.push(cur); rows.push(row); row=[]; cur=""; }
-        else if(ch === "\r"){ }
-        else cur+=ch;
-      }
-    }
-    row.push(cur); rows.push(row);
-    while(rows.length && rows[rows.length-1].every(c=>String(c).trim()==="")) rows.pop();
-    return rows;
-  }
-  function matrixToObjects(matrix){
-    const headers=(matrix[0]||[]).map((h,i)=>{
-      const s = String(h??"").replace(/^\uFEFF/, "").trim();
-      return s || `Column ${i+1}`;
-    });
-    const objects=[];
-    for(let r=1;r<matrix.length;r++){
-      const line=matrix[r]||[];
-      if(!line.length) continue;
-      if(line.every(c=>String(c??"").trim()==="")) continue;
-      const obj={};
-      for(let c=0;c<headers.length;c++) obj[headers[c]] = (line[c] ?? "");
-      objects.push(obj);
-    }
-    return { headers, objects };
-  }
-
-  async function importFile(file){
-    const name=(file?.name||"").toLowerCase();
+  // ---------- import ----------
+  async function importFile(file) {
+    const name = (file?.name || "").toLowerCase();
     setStatus("Loading…");
 
-    csvRowsAll=[]; allRows=[]; filteredRows=[];
-    activeTeamType=""; activeTeam=""; activeProject="";
+    csvRowsAll = [];
+    allRows = [];
+    filteredRows = [];
+    activeTeamType = "";
+    activeTeam = "";
+    activeProject = "";
     runwayDate = null;
 
-    elProjectSelect.innerHTML = `<option value="">Select a project…</option>`;
-    elProjectSelect.disabled = true;
-    elSearch.value = "";
-    elSearch.disabled = true;
+    // Guarded UI resets (prevents your null.innerHTML crash)
+    if (elProjectSelect) {
+      elProjectSelect.innerHTML = `<option value="">Select a project…</option>`;
+      elProjectSelect.disabled = true;
+    }
+    if (elSearch) {
+      elSearch.value = "";
+      elSearch.disabled = true;
+    }
+    if (elTeamTypeRadios) elTeamTypeRadios.innerHTML = "";
+    if (elTeamRadios) elTeamRadios.innerHTML = "";
+    if (elTable) elTable.innerHTML = "";
+    if (elRowCount) elRowCount.textContent = "0 rows";
 
-    elTeamTypeRadios.innerHTML = "";
-    elTeamRadios.innerHTML = "";
-    elTable.innerHTML = "";
-    elRowCount.textContent = "0 rows";
-
-    try{
-      if(name.endsWith(".csv") || name.endsWith(".tsv") || name.endsWith(".txt")){
+    try {
+      if (name.endsWith(".csv") || name.endsWith(".tsv") || name.endsWith(".txt")) {
         const text = await file.text();
         const delim = detectDelimiter(text);
         const matrix = parseDelimited(text, delim);
@@ -691,8 +780,8 @@ function startApp(){
 
         typeCols = discoverTeamTypeColumns(headers);
 
-        csvRowsAll = objects.map(o=>{
-          const row = { ...o, __keyMap:keyMap };
+        csvRowsAll = objects.map(o => {
+          const row = { ...o, __keyMap: keyMap };
           const info = deriveTeamInfo(row, typeCols);
           row.__teamType = info.teamType || "";
           row.__team = info.team || "";
@@ -700,8 +789,14 @@ function startApp(){
         });
 
         renderRadioRow(elTeamTypeRadios, TEAM_TYPES_FIXED, "", setTeamType);
-        const teamsAll = uniq(csvRowsAll.map(r=>displayTeam(String(r.__team||"").trim()))).sort((a,b)=>a.localeCompare(b));
-        renderRadioRow(elTeamRadios, teamsAll, "", (v)=> setTeam(v));
+        const teamsAll = uniq(csvRowsAll.map(r => displayTeam(String(r.__team || "").trim()))).sort((a, b) => a.localeCompare(b));
+        renderRadioRow(elTeamRadios, teamsAll, "", (v) => setTeam(v));
+
+        // If dropdown doesn’t exist, choose project from URL/first project now:
+        buildProjectNameMap(csvRowsAll);
+        const allCodes = uniq(csvRowsAll.map(r => String(pick(r, FIELDS.projectCode) || "").trim()).filter(Boolean));
+        const urlProject = getProjectFromUrl();
+        activeProject = (urlProject && allCodes.includes(urlProject)) ? urlProject : (allCodes[0] || "");
 
         applyCsvFilters();
 
@@ -709,22 +804,22 @@ function startApp(){
         return;
       }
 
-      if(name.endsWith(".xlsx") || name.endsWith(".xls")){
-        if(typeof XLSX === "undefined") throw new Error("XLSX library not loaded (check network).");
+      if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+        if (typeof XLSX === "undefined") throw new Error("XLSX library not loaded (check network).");
 
         const data = await file.arrayBuffer();
-        const workbook = XLSX.read(data,{ type:"array", cellDates:true });
-        if(!workbook.SheetNames?.length) throw new Error("No sheets found.");
+        const workbook = XLSX.read(data, { type: "array", cellDates: true });
+        if (!workbook.SheetNames?.length) throw new Error("No sheets found.");
         const firstSheet = workbook.SheetNames[0];
         const ws = workbook.Sheets[firstSheet];
-        const matrix = XLSX.utils.sheet_to_json(ws,{ header:1, defval:"", raw:false });
+        const matrix = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false });
         const { headers, objects } = matrixToObjects(matrix);
         const keyMap = buildHeaderIndex(headers);
 
         typeCols = discoverTeamTypeColumns(headers);
 
-        csvRowsAll = objects.map(o=>{
-          const row = { ...o, __keyMap:keyMap };
+        csvRowsAll = objects.map(o => {
+          const row = { ...o, __keyMap: keyMap };
           const info = deriveTeamInfo(row, typeCols);
           row.__teamType = info.teamType || "";
           row.__team = info.team || "";
@@ -732,8 +827,13 @@ function startApp(){
         });
 
         renderRadioRow(elTeamTypeRadios, TEAM_TYPES_FIXED, "", setTeamType);
-        const teamsAll = uniq(csvRowsAll.map(r=>displayTeam(String(r.__team||"").trim()))).sort((a,b)=>a.localeCompare(b));
-        renderRadioRow(elTeamRadios, teamsAll, "", (v)=> setTeam(v));
+        const teamsAll = uniq(csvRowsAll.map(r => displayTeam(String(r.__team || "").trim()))).sort((a, b) => a.localeCompare(b));
+        renderRadioRow(elTeamRadios, teamsAll, "", (v) => setTeam(v));
+
+        buildProjectNameMap(csvRowsAll);
+        const allCodes = uniq(csvRowsAll.map(r => String(pick(r, FIELDS.projectCode) || "").trim())).filter(Boolean);
+        const urlProject = getProjectFromUrl();
+        activeProject = (urlProject && allCodes.includes(urlProject)) ? urlProject : (allCodes[0] || "");
 
         applyCsvFilters();
         setStatus(`Imported "${file.name}" (sheet: ${firstSheet})`, "ok");
@@ -741,51 +841,53 @@ function startApp(){
       }
 
       setStatus("Unsupported file type.", "warn");
-    } catch(err){
+    } catch (err) {
       console.error(err);
       setStatus(`Failed to load: ${err?.message || err}`, "warn");
     }
   }
 
-  // NEW: auto-load ./sheetjs.csv from GitHub repo on first load
-  async function autoLoadDefaultCsv(){
-    // If you're opening index.html directly (file://), fetch won't work reliably.
-    if(location.protocol === "file:"){
-      setStatus(`Tip: open via a web server or GitHub Pages to auto-load sheetjs.csv`, "warn");
+  // ---------- auto-load sheetjs.csv ----------
+  async function autoLoadDefaultCsv() {
+    // If you open index.html via file://, fetch won’t work reliably
+    if (location.protocol === "file:") {
+      setStatus(`Tip: open via GitHub Pages / a web server to auto-load sheetjs.csv`, "warn");
       return;
     }
 
-    try{
+    try {
       setStatus("Loading sheetjs.csv from repo…");
 
       const res = await fetch(DEFAULT_CSV_URL.toString(), { cache: "no-store" });
-      if(!res.ok) throw new Error(`HTTP ${res.status} (${res.statusText})`);
+      if (!res.ok) throw new Error(`HTTP ${res.status} (${res.statusText})`);
 
       const blob = await res.blob();
-      const file = new File([blob], "sheetjs.csv", {
-        type: blob.type || "text/csv"
-      });
+      const file = new File([blob], "sheetjs.csv", { type: blob.type || "text/csv" });
 
       await importFile(file);
-      setStatus(`Auto-loaded sheetjs.csv`, "ok");
-    } catch(err){
+      setStatus("Auto-loaded sheetjs.csv", "ok");
+    } catch (err) {
       console.warn("Auto-load failed:", err);
-      setStatus(`Auto-load failed (check sheetjs.csv path / GitHub Pages publish): ${err?.message || err}`, "warn");
-      // user can still upload manually
+      setStatus(`Auto-load failed: ${err?.message || err}`, "warn");
+      // manual upload can still work (if the upload control exists on that page)
     }
   }
 
-  // ---- events
-  elFile.addEventListener("change", async ()=>{
-    const f = elFile.files?.[0];
-    if(f) await importFile(f);
-  });
-  elProjectSelect.addEventListener("change", renderAll);
-  elSearch.addEventListener("input", renderAll);
+  // ---------- events (guarded) ----------
+  if (elFile) {
+    elFile.addEventListener("change", async () => {
+      const f = elFile.files?.[0];
+      if (f) await importFile(f);
+    });
+  }
+  if (elProjectSelect) elProjectSelect.addEventListener("change", renderAll);
+  if (elSearch) elSearch.addEventListener("input", renderAll);
 
-  // Initial
-  gantt.setData({ title:"Select a project", projectPP:0, stages:[], runwayDate:null });
-  metrics.setData({ title:"", hours:{AH:0,TCH:0,BH:0}, people:[], runway:null });
+  // Initial (guarded)
+  if (HAS_DASHBOARD) {
+    gantt?.setData({ title: "Select a project", projectPP: 0, stages: [], runwayDate: null });
+    metrics?.setData({ title: "", hours: { AH: 0, TCH: 0, BH: 0 }, people: [], runway: null });
+  }
 
   // Kick off auto-load
   autoLoadDefaultCsv();
