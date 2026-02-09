@@ -6,69 +6,142 @@ export function initMetrics(mountEl, opts = {}){
   let state = {
     title: "",
     hours: { AH:null, TCH:null, BH:null },
-    people: [],              // [{name,pct}]
-    deploymentNames: [],     // fallback list of names (no %)
+    people: [],
+    deploymentNames: [],
     runway: null
   };
 
   mountEl.innerHTML = `
-    <div style="display:flex; flex-direction:column; gap:14px;">
+    <style>
+      .mSection{ display:flex; flex-direction:column; gap:14px; }
+
+      .mTitle{ font-size:13px; font-weight:900; color: var(--text); }
+      .mNote{ margin-top:6px; color: var(--muted); font-size:12px; line-height:1.35; }
+
+      .mPanel{
+        margin-top:10px;
+        border:1px solid rgba(15,23,42,0.10);
+        border-radius:14px;
+        background: rgba(255,255,255,0.75);
+        padding:10px;
+        box-shadow: 0 14px 34px rgba(0,0,0,0.10);
+      }
+
+      .mDivider{ border-top:1px solid rgba(15,23,42,0.08); padding-top:14px; }
+
+      .mGrid2{
+        display:grid;
+        grid-template-columns: 180px 1fr;
+        gap:10px;
+        align-items:center;
+        margin-top:10px;
+      }
+
+      .mLegend{
+        border:1px solid rgba(15,23,42,0.10);
+        border-radius:12px;
+        padding:10px;
+        max-height: 210px;
+        overflow:auto;
+        background: rgba(255,255,255,0.75);
+        box-shadow: 0 14px 34px rgba(0,0,0,0.10);
+      }
+
+      .mBtn{
+        border:1px solid rgba(15,23,42,0.14);
+        background: rgba(255,255,255,0.90);
+        color: rgba(15,23,42,0.90);
+        border-radius:12px;
+        padding:10px 12px;
+        cursor:pointer;
+        font-weight:900;
+        box-shadow: 0 10px 26px rgba(0,0,0,0.08);
+      }
+      .mBtn:hover{ border-color: rgba(15,23,42,0.24); box-shadow: 0 14px 34px rgba(0,0,0,0.12); }
+
+      .pill{
+        font-size:12px;
+        padding:6px 10px;
+        border-radius:999px;
+        border:1px solid rgba(15,23,42,0.12);
+        background: rgba(255,255,255,0.85);
+        color: rgba(15,23,42,0.85);
+        font-weight:900;
+      }
+
+      .simWrap{
+        margin-top:10px;
+        border:1px solid rgba(15,23,42,0.10);
+        border-radius:12px;
+        background: rgba(255,255,255,0.75);
+        overflow:hidden;
+        box-shadow: 0 14px 34px rgba(0,0,0,0.10);
+      }
+
+      .simRow{
+        display:grid;
+        grid-template-columns: 1fr 90px 44px;
+        gap:8px;
+        padding:10px;
+        border-bottom:1px solid rgba(15,23,42,0.08);
+        align-items:center;
+      }
+
+      .simName{
+        font-size:12px;
+        font-weight:900;
+        color: rgba(15,23,42,0.90);
+        overflow:hidden;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+      }
+
+      .simInput{
+        width:100%;
+        border-radius:10px;
+        border:1px solid rgba(15,23,42,0.12);
+        background: rgba(255,255,255,0.95);
+        padding:8px 10px;
+        font-weight:900;
+        color: rgba(15,23,42,0.90);
+        outline:none;
+      }
+
+      .simUnit{
+        font-size:12px;
+        font-weight:900;
+        color: rgba(15,23,42,0.70);
+        text-align:center;
+      }
+    </style>
+
+    <div class="mSection">
 
       <div>
-        <b style="font-size:13px;">Hours utilization</b>
-        <div class="note" style="margin-top:6px;">Bar fills by TCH vs AH. If TCH exceeds AH, the extra is hatched. Missing values show as “/”.</div>
-
-        <div id="hoursBar" style="
-          margin-top:10px;
-          border:1px solid rgba(255,255,255,0.10);
-          border-radius:14px;
-          background: rgba(0,0,0,0.10);
-          padding:10px;
-        "></div>
+        <div class="mTitle">Hours utilization</div>
+        <div class="mNote">Bar fills by TCH vs AH. If TCH exceeds AH, the extra is hatched. Missing values show “/”.</div>
+        <div id="hoursBar" class="mPanel"></div>
       </div>
 
-      <div style="border-top:1px solid rgba(255,255,255,0.06); padding-top:14px;">
-        <b style="font-size:13px;">Deployment (DYT)</b>
-        <div class="note" style="margin-top:6px;">Uses absolute percentages if present (e.g., Name (10%)). If only names exist, they’re listed with “/”.</div>
+      <div class="mDivider">
+        <div class="mTitle">Deployment (DYT)</div>
+        <div class="mNote">Uses absolute percentages if present (e.g., Name (10%)). If only names exist, they’re listed with “/”.</div>
 
-        <div style="display:grid; grid-template-columns: 180px 1fr; gap:10px; align-items:center; margin-top:10px;">
+        <div class="mGrid2">
           <canvas id="deployChart" height="170"></canvas>
-          <div id="deployLegend" style="
-            border:1px solid rgba(255,255,255,0.10);
-            border-radius:12px;
-            padding:10px;
-            max-height: 210px;
-            overflow:auto;
-            background: rgba(0,0,0,0.10);
-          "></div>
+          <div id="deployLegend" class="mLegend"></div>
         </div>
       </div>
 
-      <div style="border-top:1px solid rgba(255,255,255,0.06); padding-top:14px;">
-        <b style="font-size:13px;">Runway simulator</b>
-        <div class="note" style="margin-top:6px;">
-          Edit each person’s % (absolute). Runway = BH ÷ ((sum(%)/100) × 174.25).
-        </div>
+      <div class="mDivider">
+        <div class="mTitle">Runway simulator</div>
+        <div class="mNote">Edit each person’s % (absolute). Runway = BH ÷ ((sum(%)/100) × 174.25).</div>
 
         <div id="runwaySummary" style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;"></div>
-
-        <div id="simList" style="
-          margin-top:10px;
-          border:1px solid rgba(255,255,255,0.10);
-          border-radius:12px;
-          background: rgba(0,0,0,0.10);
-          overflow:hidden;
-        "></div>
+        <div id="simList" class="simWrap"></div>
 
         <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
-          <button id="resetSim" type="button" style="
-            border:1px solid rgba(255,255,255,0.12);
-            background:#0f172a;
-            color:rgba(255,255,255,0.86);
-            border-radius:12px;
-            padding:10px 12px;
-            cursor:pointer;
-          ">Reset to file values</button>
+          <button id="resetSim" type="button" class="mBtn">Reset to file values</button>
         </div>
       </div>
 
@@ -127,12 +200,11 @@ export function initMetrics(mountEl, opts = {}){
           <span class="pill">TCH: /</span>
           <span class="pill">BH: /</span>
         </div>
-        <div class="note">/</div>
+        <div class="mNote">/</div>
       `;
       return;
     }
 
-    // Render bar using numeric fallbacks (so layout stays stable)
     const a = (AH == null) ? 0 : AH;
     const t = (TCH == null) ? 0 : TCH;
 
@@ -161,23 +233,23 @@ export function initMetrics(mountEl, opts = {}){
         position:relative;
         height:20px;
         border-radius:999px;
-        background: rgba(255,255,255,0.06);
-        border:1px solid rgba(255,255,255,0.10);
+        background: rgba(15,23,42,0.06);
+        border:1px solid rgba(15,23,42,0.10);
         overflow:visible;
       ">
-        <div style="position:absolute; left:${basePct}%; top:-6px; bottom:-6px; width:2px; background:rgba(255,255,255,0.25);"></div>
+        <div style="position:absolute; left:${basePct}%; top:-6px; bottom:-6px; width:2px; background:rgba(15,23,42,0.18);"></div>
 
         <div style="
           position:absolute; left:0; top:0; bottom:0;
           width:${withinPct}%;
           border-radius:999px;
-          background: rgba(90, 173, 255, 0.92);
+          background: var(--arch);
           display:flex; align-items:center;
           justify-content:${insideLabel(withinPct) ? "center" : "flex-start"};
         ">
           ${insideLabel(withinPct)
-            ? `<span style="font-size:11px; color:rgba(255,255,255,0.95); padding:0 8px; white-space:nowrap;">${escapeHtml(fmt(within,1))}</span>`
-            : `<span style="position:absolute; left:calc(${withinPct}% + 8px); font-size:11px; color:rgba(255,255,255,0.85); white-space:nowrap;">${escapeHtml(fmt(within,1))}</span>`
+            ? `<span style="font-size:11px; color:rgba(15,23,42,0.92); padding:0 8px; white-space:nowrap; font-weight:900;">${escapeHtml(fmt(within,1))}</span>`
+            : `<span style="position:absolute; left:calc(${withinPct}% + 8px); font-size:11px; color:rgba(15,23,42,0.82); white-space:nowrap; font-weight:900;">${escapeHtml(fmt(within,1))}</span>`
           }
         </div>
 
@@ -191,184 +263,138 @@ export function initMetrics(mountEl, opts = {}){
             background-image: repeating-linear-gradient(
               45deg,
               rgba(255,255,255,0.00) 0 6px,
-              rgba(255,255,255,0.28) 6px 9px
+              rgba(255,255,255,0.45) 6px 9px
             );
-            background-color: rgba(255,122,122,0.70);
-            border:1px solid rgba(255,122,122,0.30);
-            display:flex; align-items:center;
-            justify-content:${insideLabel(exceedPct) ? "center" : "flex-start"};
-          ">
-            ${insideLabel(exceedPct)
-              ? `<span style="font-size:11px; color:rgba(255,255,255,0.95); padding:0 8px; white-space:nowrap;">+${escapeHtml(fmt(exceed,1))}</span>`
-              : `<span style="position:absolute; left:calc(${basePct + exceedPct}% + 8px); font-size:11px; color:rgba(255,255,255,0.85); white-space:nowrap;">+${escapeHtml(fmt(exceed,1))}</span>`
-            }
-          </div>
+            background-color: rgba(198,40,40,0.55);
+            border:1px solid rgba(198,40,40,0.22);
+          "></div>
         ` : ``}
       </div>
     `;
   }
 
-  function destroyChart(){
-    if(chart){ chart.destroy(); chart=null; }
-  }
+  function renderDeployment(people){
+    const items = Array.isArray(people) ? people.slice() : [];
+    const labels = items.map(p => p.name || "(Blank)");
+    const data = items.map(p => Number(p.pct || 0));
 
-  function renderDeploymentChart(people, deploymentNames){
-    destroyChart();
-
-    const numeric = (people || []).filter(p => Number.isFinite(p.pct) && p.pct > 0);
-    const namesOnly = (deploymentNames || []).filter(Boolean);
-
-    if(!numeric.length){
-      // No numeric % data — show names if present
-      const items = namesOnly.length ? namesOnly : [];
-      if(!items.length){
-        elDeployLegend.innerHTML = `<div class="note">/</div>`;
-        return;
-      }
-      elDeployLegend.innerHTML = items.map(n=>`
-        <div style="
-          display:flex; align-items:center; justify-content:space-between; gap:10px;
-          padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.06);
-          font-size:12px;
-        ">
-          <div style="display:flex; align-items:center; gap:8px; min-width:0;">
-            <span style="width:10px; height:10px; border-radius:3px; border:1px solid rgba(255,255,255,0.20); background:rgba(255,255,255,0.25);"></span>
-            <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px;">${escapeHtml(n)}</span>
+    // Legend
+    elDeployLegend.innerHTML = labels.length
+      ? labels.map((name, i)=>`
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 0; border-bottom:1px solid rgba(15,23,42,0.08);">
+            <div style="font-size:12px; font-weight:900; color:rgba(15,23,42,0.88); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+              ${escapeHtml(name)}
+            </div>
+            <div style="font-size:12px; font-weight:900; color:rgba(15,23,42,0.72);">${escapeHtml(fmt(data[i],1))}%</div>
           </div>
-          <div style="color:var(--muted); flex:0 0 auto;">/</div>
-        </div>
-      `).join("");
-      return;
-    }
-
-    const top = numeric.slice(0, 12);
-    const total = top.reduce((s,p)=>s+p.pct, 0);
-
-    const labels = top.map(p=>p.name);
-    const values = top.map(p=>p.pct);
-
-    const remainder = 100 - total;
-    if(remainder > 0){
-      labels.push("Unallocated");
-      values.push(remainder);
-    } else if(remainder < 0){
-      labels.push("Over-allocated");
-      values.push(Math.abs(remainder));
-    }
-
-    if(typeof Chart === "undefined"){
-      elDeployLegend.innerHTML = `<div class="note">Chart.js not loaded (check network).</div>`;
-      return;
-    }
+        `).join("")
+      : `<div class="mNote">/</div>`;
 
     const canvas = mountEl.querySelector("#deployChart");
+    if(!canvas || typeof Chart === "undefined") return;
+
+    if(chart){
+      chart.destroy();
+      chart = null;
+    }
+
     chart = new Chart(canvas, {
-      type:"doughnut",
-      data:{ labels, datasets:[{ data: values }]},
-      options:{
-        responsive:true,
-        plugins:{
-          legend:{ display:false },
-          tooltip:{ callbacks:{ label:(ctx)=> `${ctx.label}: ${Number(ctx.raw||0).toFixed(1)}%` } }
-        }
+      type: "doughnut",
+      data: {
+        labels,
+        datasets: [{
+          data
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display:false },
+          tooltip: {
+            callbacks: {
+              label: (ctx)=> `${ctx.label}: ${ctx.parsed}%`
+            }
+          }
+        },
+        cutout: "62%"
       }
     });
-
-    const meta = chart.getDatasetMeta(0);
-    const colors = meta?.data?.map(el => el.options?.backgroundColor) || labels.map(()=> "rgba(255,255,255,0.25)");
-
-    elDeployLegend.innerHTML = labels.map((name, i)=>`
-      <div style="
-        display:flex; align-items:center; justify-content:space-between; gap:10px;
-        padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.06);
-        font-size:12px;
-      ">
-        <div style="display:flex; align-items:center; gap:8px; min-width:0;">
-          <span style="width:10px; height:10px; border-radius:3px; border:1px solid rgba(255,255,255,0.20); background:${colors[i]};"></span>
-          <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px;">${escapeHtml(name)}</span>
-        </div>
-        <div style="color:var(--muted); flex:0 0 auto;">${Number(values[i]).toFixed(1)}%</div>
-      </div>
-    `).join("");
   }
 
   function renderRunwaySummary(runway){
-    const rm = runway?.runwayMonths;
-    const factor = runway?.factorDecimal;
-    const burn = runway?.monthlyBurn;
+    const months = runway?.runwayMonths;
+    const date = runway?.runwayDate;
 
-    const pill = (txt)=>`<span class="pill">${escapeHtml(txt)}</span>`;
-    const parts = [];
-    parts.push(pill(`Factor: ${Number.isFinite(factor) ? factor.toFixed(2) : "/"}`));
-    parts.push(pill(`Burn/mo: ${Number.isFinite(burn) ? burn.toFixed(1) : "/"}`));
+    const monthsTxt = (months == null) ? "/" : (Number.isFinite(months) ? months.toFixed(2) : "/");
+    const dateTxt = (date instanceof Date && !isNaN(date)) ? date.toLocaleDateString() : "/";
 
-    if(rm == null) parts.push(pill(`Runway: /`));
-    else parts.push(pill(`Runway: ${rm.toFixed(1)} mo`));
-
-    elRunwaySummary.innerHTML = parts.join("");
+    elRunwaySummary.innerHTML = `
+      <span class="pill">Runway (months): ${escapeHtml(monthsTxt)}</span>
+      <span class="pill">Runway date: ${escapeHtml(dateTxt)}</span>
+    `;
   }
 
   function renderSimList(){
     if(!simPeople.length){
-      elSimList.innerHTML = `<div class="note" style="padding:10px;">/</div>`;
+      elSimList.innerHTML = `<div style="padding:10px;" class="mNote">/</div>`;
       return;
     }
 
-    elSimList.innerHTML = `
-      <table style="width:100%; border-collapse:collapse; font-size:12px;">
-        <thead>
-          <tr>
-            <th style="text-align:left; padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.06); color:var(--muted);">Name</th>
-            <th style="text-align:right; padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.06); color:var(--muted);">%</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${simPeople.map((p, idx)=>`
-            <tr>
-              <td style="padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.06);">${escapeHtml(p.name)}</td>
-              <td style="padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.06); text-align:right;">
-                <input data-idx="${idx}" type="number" min="0" max="100" step="0.5" value="${Number(p.pct).toFixed(1)}"
-                  style="width:90px; text-align:right; background:#0f172a; border:1px solid rgba(255,255,255,0.10); color:var(--text); border-radius:10px; padding:6px 8px;" />
-              </td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    `;
+    elSimList.innerHTML = simPeople.map((p, idx)=>`
+      <div class="simRow">
+        <div class="simName" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>
+        <input class="simInput" data-idx="${idx}" type="number" min="0" step="0.1" value="${escapeHtml(String(p.pct ?? 0))}" />
+        <div class="simUnit">%</div>
+      </div>
+    `).join("");
 
-    elSimList.querySelectorAll("input[type=number]").forEach(inp=>{
-      inp.addEventListener("input", ()=>{
-        const idx = Number(inp.dataset.idx || 0);
-        const v = Number(inp.value || 0);
-        simPeople[idx].pct = Math.max(0, Math.min(100, v));
-        const runway = computeRunway(simPeople, Number(state.hours?.BH));
-        renderRunwaySummary(runway);
-        onRunwaySimulated(runway);
+    for(const input of elSimList.querySelectorAll(".simInput")){
+      input.addEventListener("input", ()=>{
+        const i = Number(input.getAttribute("data-idx"));
+        const v = Number(input.value);
+        if(Number.isFinite(i) && simPeople[i]){
+          simPeople[i].pct = Number.isFinite(v) ? v : 0;
+          const rw = computeRunway(simPeople, state.hours?.BH);
+          state.runway = rw;
+          renderRunwaySummary(rw);
+          onRunwaySimulated(rw);
+        }
       });
-    });
+    }
   }
+
+  elReset.addEventListener("click", ()=>{
+    simPeople = baselinePeople.map(p => ({...p}));
+    const rw = computeRunway(simPeople, state.hours?.BH);
+    state.runway = rw;
+    renderRunwaySummary(rw);
+    renderSimList();
+    onRunwaySimulated(rw);
+  });
 
   function setData(next){
-    state = { ...state, ...next };
-    baselinePeople = (state.people || []).map(p=>({ ...p }));
-    simPeople = baselinePeople.map(p=>({ ...p }));
+    state = {
+      ...state,
+      ...next,
+      hours: next?.hours ?? state.hours,
+      people: Array.isArray(next?.people) ? next.people : state.people
+    };
+
+    // Setup baseline simulator from file values
+    baselinePeople = (state.people || []).map(p => ({ name: p.name, pct: Number(p.pct || 0) }));
+    simPeople = baselinePeople.map(p => ({...p}));
+
+    // Compute runway
+    const rw = computeRunway(simPeople, state.hours?.BH);
+    state.runway = rw;
 
     renderHoursUtil(state.hours);
-    renderDeploymentChart(state.people, state.deploymentNames);
-    const runway = state.runway || computeRunway(state.people, Number(state.hours?.BH));
-    renderRunwaySummary(runway);
+    renderDeployment(state.people);
+    renderRunwaySummary(rw);
     renderSimList();
+
+    onRunwaySimulated(rw);
   }
 
-  elReset.onclick = ()=>{
-    simPeople = baselinePeople.map(p=>({ ...p }));
-    renderSimList();
-    const runway = computeRunway(simPeople, Number(state.hours?.BH));
-    renderRunwaySummary(runway);
-    onRunwaySimulated(runway);
-  };
-
-  // init empty
-  setData(state);
   return { setData };
 }
