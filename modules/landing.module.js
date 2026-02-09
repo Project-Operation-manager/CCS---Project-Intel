@@ -129,6 +129,27 @@ export function initLanding(mountEl, opts = {}){
       }
       .teamTag b{ color: rgba(255,255,255,0.92); font-weight:600; }
 
+      .progressBlock{ display:flex; flex-direction:column; gap:6px; }
+      .progressTrack{
+        width:100%;
+        height:10px;
+        border-radius:999px;
+        border:1px solid rgba(255,255,255,0.10);
+        background: rgba(0,0,0,0.14);
+        overflow:hidden;
+      }
+      .progressTrack.na{
+        background: rgba(0,0,0,0.10);
+        border-style:dashed;
+      }
+      .progressFill{
+        height:100%;
+        width:0%;
+        border-radius:999px;
+        background: linear-gradient(90deg, rgba(139,255,178,0.55), rgba(139,255,178,0.18));
+      }
+      .progressTrack.na .progressFill{ width:0% !important; background: transparent; }
+
       .empty{
         padding:16px;
         border:1px dashed rgba(255,255,255,0.14);
@@ -186,6 +207,15 @@ export function initLanding(mountEl, opts = {}){
     return `${Math.round(n)}%`;
   }
 
+  function pct01to100(v){
+    if(v == null) return null;
+    const n = Number(v);
+    if(!Number.isFinite(n)) return null;
+    // tolerate either 0–1 or 0–100 inputs
+    const pct = (n <= 1 && n >= 0) ? (n * 100) : n;
+    return Math.max(0, Math.min(100, pct));
+  }
+
   function teamText(teams){
     // teams = [{type, name}]
     const parts = [];
@@ -202,7 +232,7 @@ export function initLanding(mountEl, opts = {}){
     const missed = (p.missedStages || []);
     const chips = [];
 
-    const pp = (p.projectPP == null ? null : Number(p.projectPP));
+    const pp = pct01to100(p.projectPP);
 
     if(missed.length){
       chips.push(`<span class="chip bad" title="Overdue stage(s)">${escapeHtml(missed[0])}${missed.length>1 ? ` +${missed.length-1}` : ""}</span>`);
@@ -216,7 +246,7 @@ export function initLanding(mountEl, opts = {}){
       chips.push(`<span class="chip">Stage /</span>`);
     }
 
-    chips.push(`<span class="chip" title="Project progress">${escapeHtml(fmtPct(pp))}</span>`);
+    // Project progress is shown as a progress bar (not a chip)
 
     const teams = teamText(p.teams);
 
@@ -236,6 +266,16 @@ export function initLanding(mountEl, opts = {}){
 
         <div class="tBody">
           ${teamHtml}
+
+          <div class="progressBlock" aria-label="Project progress">
+            <div class="row">
+              <div class="k">Progress</div>
+              <div class="v">${escapeHtml(fmtPct(pp))}</div>
+            </div>
+            <div class="progressTrack ${pp==null ? "na" : ""}">
+              <div class="progressFill" style="width:${pp==null ? 0 : Math.round(pp)}%"></div>
+            </div>
+          </div>
 
           <div class="row">
             <div class="k">BUA</div>
