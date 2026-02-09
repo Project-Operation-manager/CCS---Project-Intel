@@ -11,24 +11,21 @@
 
   <style>
     :root{
-      /* ✅ Match landing */
+      /* Same theme as landing */
       --bg:#f6f3ef;
-      --card:#ffffff;
+      --card: rgba(255,255,255,0.78);
       --text:#15202b;
       --muted:#586574;
-      --grid: rgba(15, 23, 42, 0.10);
+      --grid: rgba(15,23,42,0.10);
+      --shadow: 0 18px 46px rgba(0,0,0,0.10);
 
       --chip:#ffffff;
-      --chipBorder: rgba(15, 23, 42, 0.12);
+      --chipBorder: rgba(15,23,42,0.12);
 
       --ok:#0f8a4b;
       --warn:#b26a00;
       --bad:#c62828;
 
-      /* Module-specific */
-      --legendBorder: rgba(15, 23, 42, 0.12);
-
-      /* Pastel discipline colors (still readable) */
       --arch: rgba(90, 173, 255, 0.85);
       --interior: rgba(255, 177, 110, 0.90);
       --land: rgba(105, 219, 177, 0.85);
@@ -36,7 +33,7 @@
       --todayLine: rgba(21, 32, 43, 0.55);
       --runwayLine: rgba(178, 106, 0, 0.65);
 
-      --shadow: 0 18px 46px rgba(0,0,0,0.10);
+      --legendBorder: rgba(15,23,42,0.12);
     }
 
     *{ box-sizing:border-box; }
@@ -59,18 +56,7 @@
       flex-wrap:wrap;
     }
 
-    .leftBrand{
-      display:flex;
-      align-items:center;
-      gap:12px;
-    }
-
-    .logoLink{
-      display:inline-flex;
-      align-items:center;
-      text-decoration:none;
-    }
-
+    .leftBrand{ display:flex; align-items:center; gap:12px; }
     .logo{
       height:34px;
       width:auto;
@@ -80,23 +66,19 @@
     }
 
     a.back{
-      color: rgba(15,23,42,0.85);
+      color: rgba(15,23,42,0.90);
       text-decoration:none;
       border:1px solid rgba(15,23,42,0.12);
-      padding:8px 10px;
-      border-radius:12px;
-      background: rgba(255,255,255,0.90);
+      padding:10px 12px;
+      border-radius:14px;
+      background: rgba(255,255,255,0.92);
       font-size:12px;
-      font-weight:800;
+      font-weight:900;
       box-shadow: 0 10px 26px rgba(0,0,0,0.08);
     }
-    a.back:hover{ border-color: rgba(15,23,42,0.22); }
-
-    .pageHead{ padding:14px 16px 0; }
-    .pageTitle{
-      margin:0 0 10px 0;
-      font-size: 22px;
-      letter-spacing: 0.2px;
+    a.back:hover{
+      border-color: rgba(15,23,42,0.24);
+      box-shadow: 0 14px 34px rgba(0,0,0,0.12);
     }
 
     .layout{
@@ -112,55 +94,34 @@
     }
 
     .card{
-      background: rgba(255,255,255,0.70);
+      background:var(--card);
       border:1px solid rgba(15,23,42,0.08);
       border-radius:16px;
       padding:12px;
       box-shadow: var(--shadow);
     }
-
-    /* Shared helpers used by modules */
-    .pill{
-      font-size:12px;
-      padding:6px 10px;
-      border-radius:999px;
-      border:1px solid rgba(15,23,42,0.12);
-      background: rgba(255,255,255,0.85);
-      color: rgba(15,23,42,0.85);
-      font-weight:800;
-    }
-    .note{
-      margin-top:10px;
-      color: var(--muted);
-      font-size:12px;
-      line-height:1.35;
-    }
   </style>
 </head>
 
 <body>
-<header>
-  <div class="leftBrand">
-    <a class="logoLink" href="./index.html" aria-label="Go to landing page">
-      <img class="logo" data-logo alt="Logo" />
-    </a>
-    <a class="back" href="./index.html">← Back to projects</a>
+  <header>
+    <div class="leftBrand">
+      <a href="./index.html" aria-label="Back to landing">
+        <img class="logo" data-logo alt="Logo" />
+      </a>
+      <a class="back" href="./index.html">← Back to projects</a>
+    </div>
+  </header>
+
+  <div class="layout">
+    <main class="card">
+      <div id="ganttMount"></div>
+    </main>
+    <aside class="card">
+      <div id="metricsMount"></div>
+    </aside>
   </div>
-</header>
 
-<div class="pageHead">
-  <h1 class="pageTitle">Project Intel</h1>
-</div>
-
-<div class="layout">
-  <main class="card">
-    <div id="ganttMount"></div>
-  </main>
-  <aside class="card">
-    <div id="metricsMount"></div>
-  </aside>
-</div>
-
-<script type="module" src="./app.js"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>
