@@ -6,25 +6,30 @@
   <title>Project Intel — Landing</title>
   <link rel="icon" href="data:," />
 
-  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- XLSX for optional uploads (CSV works without it) -->
   <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js"></script>
 
   <style>
     :root{
-      /* ✅ Off-white theme (landing) */
+      /* Off-white theme (shared with dashboard) */
       --bg:#f6f3ef;
-      --card:#ffffff;
+      --card: rgba(255,255,255,0.78);
       --text:#15202b;
       --muted:#586574;
-      --grid: rgba(15, 23, 42, 0.10);
+      --grid: rgba(15,23,42,0.10);
+      --shadow: 0 18px 46px rgba(0,0,0,0.10);
 
       --chip:#ffffff;
-      --chipBorder: rgba(15, 23, 42, 0.12);
+      --chipBorder: rgba(15,23,42,0.12);
 
-      /* status accents */
       --ok:#0f8a4b;
       --warn:#b26a00;
       --bad:#c62828;
+
+      /* Discipline colors */
+      --arch: rgba(90, 173, 255, 0.85);
+      --interior: rgba(255, 177, 110, 0.90);
+      --land: rgba(105, 219, 177, 0.85);
     }
 
     *{ box-sizing:border-box; }
@@ -36,13 +41,13 @@
     }
 
     header{
-      padding:12px 16px;
       border-bottom:1px solid var(--grid);
       background: rgba(255,255,255,0.65);
       backdrop-filter: blur(6px);
     }
 
-    .top{
+    .topbar{
+      padding:12px 16px;
       display:flex;
       align-items:center;
       justify-content:space-between;
@@ -50,17 +55,11 @@
       flex-wrap:wrap;
     }
 
-    .leftBrand{
+    .brandLeft{
       display:flex;
       align-items:center;
       gap:12px;
-      min-width: 140px;
-    }
-
-    .logoLink{
-      display:inline-flex;
-      align-items:center;
-      text-decoration:none;
+      min-width: 220px;
     }
 
     .logo{
@@ -71,170 +70,150 @@
       filter: drop-shadow(0 10px 20px rgba(0,0,0,0.10));
     }
 
+    .uploadBtn{
+      border:1px solid rgba(15,23,42,0.14);
+      background: rgba(255,255,255,0.92);
+      color: rgba(15,23,42,0.90);
+      border-radius:14px;
+      padding:10px 12px;
+      cursor:pointer;
+      font-weight:900;
+      box-shadow: 0 10px 26px rgba(0,0,0,0.08);
+    }
+    .uploadBtn:hover{
+      border-color: rgba(15,23,42,0.24);
+      box-shadow: 0 14px 34px rgba(0,0,0,0.12);
+    }
+
+    .head{
+      padding:0 16px 14px;
+    }
+    h1{
+      margin:0;
+      font-size:26px;
+      letter-spacing:0.2px;
+      font-weight:950;
+    }
+
     .controls{
+      margin-top:12px;
       display:flex;
       gap:10px;
       flex-wrap:wrap;
       align-items:center;
-      justify-content:flex-end;
-      flex: 1 1 auto;
-      max-width: 1100px;
     }
 
     input[type="text"], select{
-      background:#ffffff;
-      border:1px solid var(--grid);
-      color:var(--text);
-      border-radius:12px;
-      padding:10px 10px;
-      outline:none;
-      min-width: 260px;
-      box-shadow: 0 8px 20px rgba(0,0,0,0.06);
-    }
-    select{ min-width: 220px; }
-
-    .btn{
-      border:1px solid rgba(15,23,42,0.14);
-      background: rgba(255,255,255,0.90);
-      color: var(--text);
-      border-radius: 12px;
-      padding: 10px 12px;
-      cursor:pointer;
-      font-size:12px;
-      font-weight:800;
-      letter-spacing:0.2px;
-      transition: transform .05s ease, border-color .15s ease, background .15s ease, box-shadow .15s ease;
-      user-select:none;
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
-      height: 40px;
-      box-shadow: 0 10px 26px rgba(0,0,0,0.08);
-    }
-    .btn:hover{
-      border-color: rgba(15,23,42,0.24);
-      background: rgba(255,255,255,1);
-      box-shadow: 0 14px 34px rgba(0,0,0,0.12);
-    }
-    .btn:active{ transform: scale(0.985); }
-
-    .hiddenFile{
-      position:absolute;
-      left:-9999px;
-      width:1px; height:1px;
-      opacity:0;
-      pointer-events:none;
-    }
-
-    .filtersRow{
-      display:flex;
-      gap:12px;
-      align-items:center;
-      justify-content:flex-end;
-      flex-wrap:wrap;
-      width:100%;
-    }
-
-    .radioWrap{
-      display:flex;
-      gap:8px;
-      align-items:center;
-      justify-content:flex-end;
-      flex: 0 0 auto;
-    }
-    .radioLabel{ font-size:12px; color:var(--muted); font-weight:700; }
-
-    .radioRow{
-      display:flex; gap:8px; align-items:center;
-      padding:6px 6px;
-      border:1px solid rgba(15,23,42,0.10);
+      background: rgba(255,255,255,0.92);
+      border:1px solid rgba(15,23,42,0.12);
+      color: rgba(15,23,42,0.90);
       border-radius:14px;
-      background: rgba(255,255,255,0.85);
-      max-width: 100%;
-      overflow:auto;
+      padding:10px 12px;
+      outline:none;
       box-shadow: 0 10px 26px rgba(0,0,0,0.06);
+      font-weight:800;
     }
+    input[type="text"]{ min-width: 320px; }
+    select{ min-width: 240px; }
 
+    .radioLine{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:center;
+      width:100%;
+      margin-top:10px;
+    }
+    .radioGroup{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      flex-wrap:wrap;
+      padding:8px;
+      border:1px solid rgba(15,23,42,0.10);
+      border-radius:16px;
+      background: rgba(255,255,255,0.70);
+      box-shadow: 0 12px 30px rgba(0,0,0,0.07);
+    }
+    .radioLabel{
+      font-size:12px;
+      color: rgba(15,23,42,0.70);
+      font-weight:900;
+      margin-right:4px;
+    }
     .radioBtn{
-      border:1px solid var(--chipBorder);
-      background: #ffffff;
-      color: var(--muted);
+      border:1px solid rgba(15,23,42,0.12);
+      background: rgba(255,255,255,0.92);
+      color: rgba(15,23,42,0.80);
       border-radius:999px;
-      padding:7px 10px;
+      padding:8px 10px;
       font-size:12px;
       cursor:pointer;
       white-space:nowrap;
       user-select:none;
-      transition: transform .05s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
-      box-shadow: 0 8px 18px rgba(0,0,0,0.06);
+      font-weight:900;
+      transition: transform .05s ease, border-color .15s ease, box-shadow .15s ease;
     }
     .radioBtn:active{ transform:scale(0.985); }
     .radioBtn.active{
-      color: var(--text);
-      border-color: rgba(15,23,42,0.25);
-      box-shadow: 0 10px 22px rgba(0,0,0,0.10);
+      border-color: rgba(15,23,42,0.26);
+      box-shadow: 0 0 0 2px rgba(15,23,42,0.08) inset;
+      color: rgba(15,23,42,0.92);
     }
 
     main{ padding:14px 16px 18px; }
-
-    .pageTitle{
-      margin: 0 0 10px 0;
-      font-size: 22px;
-      letter-spacing: 0.2px;
-    }
-
     .card{
-      background: rgba(255,255,255,0.70);
-      border:1px solid rgba(15,23,42,0.08);
+      background:var(--card);
+      border:1px solid rgba(15,23,42,0.10);
       border-radius:16px;
       padding:12px;
-      box-shadow:0 18px 46px rgba(0,0,0,.10);
+      box-shadow: var(--shadow);
     }
+
+    /* Hidden file input */
+    #file{ display:none; }
   </style>
 </head>
 
 <body>
-<header>
-  <div class="top">
-    <div class="leftBrand">
-      <a class="logoLink" href="./index.html" aria-label="Go to landing page">
+  <header>
+    <div class="topbar">
+      <div class="brandLeft">
         <img class="logo" data-logo alt="Logo" />
-      </a>
+      </div>
+      <button id="uploadBtn" class="uploadBtn" type="button">Upload</button>
+      <input id="file" type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" />
     </div>
 
-    <div class="controls">
-      <input id="search" type="text" placeholder="Search projects…" />
+    <div class="head">
+      <h1>Project Intel</h1>
 
-      <select id="projectSelect">
-        <option value="">Select project…</option>
-      </select>
+      <div class="controls">
+        <input id="search" type="text" placeholder="Search projects…" />
+        <select id="projectSelect">
+          <option value="">Select project…</option>
+        </select>
+      </div>
 
-      <button id="uploadBtn" class="btn" type="button">UPLOAD</button>
-      <input id="file" class="hiddenFile" type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" />
-
-      <div class="filtersRow">
-        <div class="radioWrap">
-          <span class="radioLabel">Project</span>
-          <div id="projectStatusRadios" class="radioRow"></div>
-        </div>
-
-        <div class="radioWrap">
+      <div class="radioLine">
+        <div class="radioGroup">
           <span class="radioLabel">Team</span>
-          <div id="teamRadios" class="radioRow"></div>
+          <div id="teamRadios"></div>
+        </div>
+        <div class="radioGroup">
+          <span class="radioLabel">Project</span>
+          <div id="projectStatusRadios"></div>
         </div>
       </div>
     </div>
-  </div>
-</header>
+  </header>
 
-<main>
-  <h1 class="pageTitle">Project Intel</h1>
+  <main>
+    <div class="card">
+      <div id="landingMount"></div>
+    </div>
+  </main>
 
-  <div class="card">
-    <div id="landingMount"></div>
-  </div>
-</main>
-
-<script type="module" src="./app.js"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>
