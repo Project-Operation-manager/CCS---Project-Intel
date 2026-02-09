@@ -11,16 +11,47 @@
 
   <style>
     :root{
-      --bg:#0b1220; --card:#121b2f; --text:#e8eefc; --muted:#9fb0d0; --grid:#22304f;
+      /* ✅ Match landing */
+      --bg:#f6f3ef;
+      --card:#ffffff;
+      --text:#15202b;
+      --muted:#586574;
+      --grid: rgba(15, 23, 42, 0.10);
+
+      --chip:#ffffff;
+      --chipBorder: rgba(15, 23, 42, 0.12);
+
+      --ok:#0f8a4b;
+      --warn:#b26a00;
+      --bad:#c62828;
+
+      /* Module-specific */
+      --legendBorder: rgba(15, 23, 42, 0.12);
+
+      /* Pastel discipline colors (still readable) */
+      --arch: rgba(90, 173, 255, 0.85);
+      --interior: rgba(255, 177, 110, 0.90);
+      --land: rgba(105, 219, 177, 0.85);
+
+      --todayLine: rgba(21, 32, 43, 0.55);
+      --runwayLine: rgba(178, 106, 0, 0.65);
+
+      --shadow: 0 18px 46px rgba(0,0,0,0.10);
     }
 
     *{ box-sizing:border-box; }
-    body{ margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--text); }
+    body{
+      margin:0;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      background:var(--bg);
+      color:var(--text);
+    }
 
     header{
       padding:12px 16px;
       border-bottom:1px solid var(--grid);
-      background: rgba(0,0,0,0.12);
+      background: rgba(255,255,255,0.65);
+      backdrop-filter: blur(6px);
       display:flex;
       align-items:center;
       justify-content:space-between;
@@ -45,19 +76,21 @@
       width:auto;
       display:block;
       object-fit:contain;
-      filter: drop-shadow(0 10px 20px rgba(0,0,0,0.25));
+      filter: drop-shadow(0 10px 20px rgba(0,0,0,0.10));
     }
 
     a.back{
-      color: rgba(255,255,255,0.88);
+      color: rgba(15,23,42,0.85);
       text-decoration:none;
-      border:1px solid rgba(255,255,255,0.12);
+      border:1px solid rgba(15,23,42,0.12);
       padding:8px 10px;
       border-radius:12px;
-      background: rgba(0,0,0,0.12);
+      background: rgba(255,255,255,0.90);
       font-size:12px;
+      font-weight:800;
+      box-shadow: 0 10px 26px rgba(0,0,0,0.08);
     }
-    a.back:hover{ border-color: rgba(255,255,255,0.20); }
+    a.back:hover{ border-color: rgba(15,23,42,0.22); }
 
     .pageHead{ padding:14px 16px 0; }
     .pageTitle{
@@ -79,11 +112,28 @@
     }
 
     .card{
-      background:var(--card);
-      border:1px solid var(--grid);
-      border-radius:14px;
+      background: rgba(255,255,255,0.70);
+      border:1px solid rgba(15,23,42,0.08);
+      border-radius:16px;
       padding:12px;
-      box-shadow:0 10px 30px rgba(0,0,0,.25);
+      box-shadow: var(--shadow);
+    }
+
+    /* Shared helpers used by modules */
+    .pill{
+      font-size:12px;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid rgba(15,23,42,0.12);
+      background: rgba(255,255,255,0.85);
+      color: rgba(15,23,42,0.85);
+      font-weight:800;
+    }
+    .note{
+      margin-top:10px;
+      color: var(--muted);
+      font-size:12px;
+      line-height:1.35;
     }
   </style>
 </head>
@@ -92,10 +142,8 @@
 <header>
   <div class="leftBrand">
     <a class="logoLink" href="./index.html" aria-label="Go to landing page">
-      <!-- src is set by app.js (robust fallback) -->
       <img class="logo" data-logo alt="Logo" />
     </a>
-
     <a class="back" href="./index.html">← Back to projects</a>
   </div>
 </header>
