@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Project Intel — Dashboard</title>
+  <link rel="icon" href="data:," />
+
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#0b1220; --card:#121b2f; --text:#e8eefc; --muted:#9fb0d0; --grid:#22304f;
+
+      --chip:#0f172a;
+      --chipBorder: rgba(255,255,255,0.10);
+
+      --rowh: 46px;
+
+      /* Discipline colors */
+      --arch: rgba(90, 173, 255, 0.92);
+      --interior: rgba(255, 169, 77, 0.92);
+      --land: rgba(176, 124, 255, 0.92);
+
+      /* PP color */
+      --pp: rgba(255, 92, 162, 0.92);
+
+      /* Lines */
+      --todayLine: rgba(255,255,255,0.70);
+      --runwayLine: rgba(255,209,138,0.90);
+
+      --ok:#8bffb2;
+      --warn:#ffd18a;
+      --bad:#ff7a7a;
+
+      --legendBorder: rgba(255,255,255,0.10);
+    }
+
+    *{ box-sizing:border-box; }
+    body{ margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--text); }
+
+    header{
+      padding:12px 16px;
+      border-bottom:1px solid var(--grid);
+      background: rgba(0,0,0,0.12);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      flex-wrap:wrap;
+    }
+
+    a.back{
+      color: rgba(255,255,255,0.88);
+      text-decoration:none;
+      border:1px solid rgba(255,255,255,0.12);
+      padding:8px 10px;
+      border-radius:12px;
+      background: rgba(0,0,0,0.12);
+      font-size:12px;
+    }
+    a.back:hover{ border-color: rgba(255,255,255,0.20); }
+
+    .layout{
+      display:grid;
+      grid-template-columns: 1fr 420px;
+      gap:12px;
+      padding:12px 16px 16px;
+      align-items:start;
+      width:100%;
+    }
+    @media (max-width: 1200px){
+      .layout{ grid-template-columns: 1fr; }
+    }
+
+    .card{
+      background:var(--card); border:1px solid var(--grid);
+      border-radius:14px; padding:12px; box-shadow:0 10px 30px rgba(0,0,0,.25);
+    }
+    .note{ color:var(--muted); font-size:12px; line-height:1.45; margin-top:8px; }
+  </style>
+</head>
+
+<body>
+<header>
+  <a class="back" href="./index.html">← Back to projects</a>
+  <div class="note" style="margin:0;">Dashboard view • add <code>?project=PC</code> to the URL</div>
+</header>
+
+<div class="layout">
+  <main class="card">
+    <div id="ganttMount"></div>
+  </main>
+  <aside class="card">
+    <div id="metricsMount"></div>
+  </aside>
+</div>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>
